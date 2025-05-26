@@ -267,6 +267,7 @@ bool obj_importer::load(const char* pmodel)
 			printf("preparing data failed!\n");
 			return false;
 		}
+		m_meshes.push_back(pmesh);
 	}
 	return true;
 }
@@ -282,24 +283,39 @@ void obj_importer::unload()
 }
 
 bool obj_importer::mesh::prepare_data(
-	const tinyobj::attrib_t* attrib, 
+	const tinyobj::attrib_t* attrib,
 	const tinyobj::shape_t* pshape)
 {
-	if (pshape->mesh.num_face_vertices[0] != 3) {
-		assert(pshape->mesh.num_face_vertices[0] == 3 && "face is not triangulated!");
-		return false;
-	}
-	
-	auto mesh_data_indices = pshape->mesh.indices;
-	for (size_t i = 0; i < mesh_data_indices.size(); i++) {
-		tinyobj::index_t* pindices = &mesh_data_indices[i];
-		assert(pindices->vertex_index != -1 && "vertex has no exists in the mesh!");
-		m_verts.push_back(*(glm::vec3*)&attrib->vertices[pindices->vertex_index]);
-		if (pindices->normal_index != -1) {
-			m_normals.push_back(*(glm::vec3*)&attrib->vertices[pindices->normal_index]);
+	for (size_t f = 0; f < pshape->mesh.num_face_vertices.size(); ++f) {
+		if (pshape->mesh.num_face_vertices[f] != 3) {
+			assert(false && "face is not triangulated!");
+			return false;
 		}
-		if (pindices->texcoord_index != -1) {
-			m_texcoords.push_back(*(glm::vec2*)&attrib->vertices[pindices->texcoord_index]);
+	}
+
+	for (const tinyobj::index_t& idx : pshape->mesh.indices) {
+		int vi = idx.vertex_index * 3;
+		m_verts.emplace_back(
+			attrib->vertices[vi + 0],
+			attrib->vertices[vi + 1],
+			attrib->vertices[vi + 2]
+		);
+
+		if (idx.normal_index >= 0) {
+			int ni = idx.normal_index * 3;
+			m_normals.emplace_back(
+				attrib->normals[ni + 0],
+				attrib->normals[ni + 1],
+				attrib->normals[ni + 2]
+			);
+		}
+
+		if (idx.texcoord_index >= 0) {
+			int ti = idx.texcoord_index * 2;
+			m_texcoords.emplace_back(
+				attrib->texcoords[ti + 0],
+				attrib->texcoords[ti + 1]
+			);
 		}
 	}
 	return true;

@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include <vector>
 #include <glm/glm.hpp>
 #include "tiny_obj_loader.h"
@@ -8,6 +9,7 @@ class obj_importer
 public:
 	class mesh {
 		friend class obj_importer;
+		std::string            m_name;
 		std::vector<glm::vec3> m_verts;
 		std::vector<glm::vec3> m_normals;
 		std::vector<glm::vec2> m_texcoords;
@@ -21,6 +23,7 @@ public:
 		inline const glm::vec3* get_verts() const { return m_verts.data(); }
 		inline const glm::vec3* get_normals() const { return m_normals.data(); }
 		inline const glm::vec2* get_texcoords() const { return m_texcoords.data(); }
+		inline const char* get_name() const { return m_name.c_str(); }
 	};
 
 private:
