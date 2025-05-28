@@ -16,25 +16,68 @@
 SDL_Window* pwindow;
 SDL_GLContext ctx;
 obj_importer obj;
+float current_time;
+
+#define arrsize(x) (sizeof(x) / sizeof(x[0]))
 
 model_node nodes_hierarchy[] = {
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(-1, "", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f })
+  model_node(-1, "node0", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(0,  "node1", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(0,  "node2", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(2,  "node3", { 10.f, 0.f, 0.f }, { 0.f, 0.f, 45.f }),
+  model_node(3,  "node4", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(3,  "node5", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(2,  "node6", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(3,  "node7", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(3,  "node8", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f })
 };
+
+/**
+* prepare_nodes
+*/
+void prepare_nodes(model_node *pnodes, int count)
+{
+  for (int i = 0; i < count; i++) {
+    model_node* pparent = &pnodes[i];
+    for (int j = 0; j < count; j++) {
+      model_node* pchild = &pnodes[j];
+      if (pchild->get_parent_id() == i) {
+        pparent->add_child(j);
+      }
+    }
+  }
+}
+
+/**
+* print_childs
+*/
+void print_childs(const model_node* pnodes, int count)
+{
+  printf("=== print_childs ===\n");
+  for (int i = 0; i < count; i++) {
+    const model_node* pnode = &pnodes[i];
+    printf(" parent: %d   \"%s\"\n", i, pnode->get_name());
+    for (size_t j = 0; j < pnode->get_num_childs(); j++) {
+      const model_node* pchild = &pnodes[j];
+      printf("   child: %d  \"%s\"\n",
+        pchild->get_parent_id(), pchild->get_name());
+    }
+  }
+  printf("\n");
+}
 
 class pendulum_vis
 {
 
 public:
 };
+
+float get_time()
+{
+  Uint64 freq = SDL_GetPerformanceFrequency();
+  Uint64 counter = SDL_GetPerformanceCounter();
+  return counter / (double)freq;
+}
 
 void update_viewport(int width, int height)
 {
@@ -82,7 +125,43 @@ bool handle_events()
   return b_active;
 }
 
-float curr_time;
+void draw_recursive(int myid)
+{
+  GLenum error;
+  if (myid == -1)
+    return;
+
+  glPushMatrix();
+  model_node* pnode = &nodes_hierarchy[myid];
+  const glm::vec3 angles = pnode->get_rotation();
+  glRotatef(angles.x, 1.f, 0.f, 0.f);
+  glRotatef(angles.y, 0.f, 1.f, 0.f);
+  glRotatef(angles.z, 0.f, 0.f, 1.f);
+  const glm::vec3& pos = pnode->get_pos();
+  glTranslatef(pos.x, pos.y, pos.z);
+
+  obj_importer::mesh* pmesh = obj.get_mesh(myid);
+  glVertexPointer(3, GL_FLOAT, 0, pmesh->get_verts());
+  glNormalPointer(GL_FLOAT, 0, pmesh->get_normals());
+  glDrawArrays(GL_TRIANGLES, 0, pmesh->get_num_verts());
+  error = glGetError();
+  if (error != GL_NO_ERROR) {
+    printf("glGetError returned error: %d (0x%x)!\n",
+      error, error);
+  }
+
+  for (int i = 0; i < pnode->get_num_childs(); i++) {
+    int child_id = pnode->get_child(i);
+    assert(child_id != -1 && "child loop");
+    draw_recursive(child_id);
+  }
+  glPopMatrix();
+}
+
+void draw_model()
+{
+  draw_recursive(0);
+}
 
 int main(int argc, char *argv[])
 {
@@ -146,23 +225,18 @@ int main(int argc, char *argv[])
   glLightfv(GL_LIGHT0, GL_POSITION, glm::value_ptr(position));
   glEnable(GL_LIGHT0);
 
+  prepare_nodes(nodes_hierarchy, arrsize(nodes_hierarchy));
+  print_childs(nodes_hierarchy, arrsize(nodes_hierarchy));
+
   glEnableClientState(GL_VERTEX_ARRAY);
   glEnableClientState(GL_NORMAL_ARRAY);
   while (handle_events()) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
-    curr_time = SDL_GetTicks() * 0.01f;
+    current_time = get_time();
     glTranslatef(0.f, -10.f, -60.f);
     glRotatef(180.f, 0.f, 1.f, 0.f);
-    for (size_t i = 0; i < obj.get_num_meshes(); i++) {
-      obj_importer::mesh* pmesh = obj.get_mesh(i);
-      glVertexPointer(3, GL_FLOAT, 0, pmesh->get_verts());
-      glNormalPointer(GL_FLOAT, 0, pmesh->get_normals());
-      glDrawArrays(GL_TRIANGLES, 0, pmesh->get_num_verts());
-      if (glGetError() != GL_NO_ERROR) {
-        printf("error!\n");
-      }
-    }
+    draw_model();
     SDL_GL_SwapWindow(pwindow);
   }
   glDisableClientState(GL_VERTEX_ARRAY);

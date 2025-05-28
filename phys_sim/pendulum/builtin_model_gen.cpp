@@ -34,5 +34,5 @@ bool dump_model(obj_importer& objimp,
 	print_meshes(objimp);
 
 
-
+	return true;
 }
