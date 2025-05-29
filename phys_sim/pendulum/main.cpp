@@ -20,6 +20,23 @@ float current_time;
 
 #define arrsize(x) (sizeof(x) / sizeof(x[0]))
 
+glm::vec3 barycenter(bbox_t &dst, const glm::vec3 *pverts, size_t count)
+{
+  glm::vec3 total(0.f, 0.f, 0.f);
+  dst.init();
+  for (size_t i = 0; i < count; i++) {
+    total += pverts[i];
+    dst.update(pverts[i]);
+  }
+  return total / float(count);
+}
+
+void transform_verts(glm::vec3* pverts, size_t count, const glm::mat4x4 &mat)
+{
+  for (size_t i = 0; i < count; i++)
+    pverts[i] = glm::vec4(pverts[i], 1.f) * mat;
+}
+
 model_node nodes_hierarchy[] = {
   model_node(-1, "node0", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(0,  "node1", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
@@ -64,6 +81,37 @@ void print_childs(const model_node* pnodes, int count)
     }
   }
   printf("\n");
+}
+
+void change_coord_system(model_node* pnodes, int count, const obj_importer *pimp)
+{
+  glm::vec3 center_coord;
+  for (int i = 0; i < count; i++) {
+    model_node* pnode = &pnodes[i];
+    obj_importer::mesh* pmesh = pimp->get_mesh(i);
+    center_coord = barycenter(pnode->get_bbox(), pmesh->get_verts(), pmesh->get_num_verts());
+    pnode->set_position(center_coord);
+
+    /* handle pendulum node */
+    if (!strcmp(pnode->get_name(), "node3")) {
+      /* find top of the model */
+      assert(pnode->get_parent_id() != -1 && "parent node is -1! this is root");
+      model_node* pparent = &pnodes[pnode->get_parent_id()];
+      const glm::vec3 &vmin = pnode->get_bbox().vec_min;
+      const glm::vec3 &vmax = pnode->get_bbox().vec_max;
+      const glm::vec3& pos = pnode->get_pos();
+      printf("found pendulum node!  pos( %f %f %f )  bbox{ min( %f %f %f ), max( %f %f %f ) }\n", 
+        pos.x, pos.y, pos.z,
+        vmin.x, vmin.y, vmin.z,
+        vmax.x, vmax.y, vmax.z);
+      printf("found pendulum node!  pos( %f %f %f )  bbox{ min( %f %f %f ), max( %f %f %f ) }\n",
+        pos.x, pos.y, pos.z,
+        vmin.x, vmin.y, vmin.z,
+        vmax.x, vmax.y, vmax.z);
+      glm::vec3 attach_pos = glm::min(pparent->get_bbox().vec_max, pnode->get_bbox().vec_max);
+      
+    }
+  }
 }
 
 class pendulum_vis
