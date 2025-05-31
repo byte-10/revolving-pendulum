@@ -34,20 +34,30 @@ glm::vec3 barycenter(bbox_t &dst, const glm::vec3 *pverts, size_t count)
 void transform_verts(glm::vec3* pverts, size_t count, const glm::mat4x4 &mat)
 {
   for (size_t i = 0; i < count; i++)
-    pverts[i] = glm::vec4(pverts[i], 1.f) * mat;
+    pverts[i] = mat * glm::vec4(pverts[i], 1.f);
 }
 
 model_node nodes_hierarchy[] = {
   model_node(-1, "node0", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(0,  "node1", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(0,  "node2", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(2,  "node3", { 10.f, 0.f, 0.f }, { 0.f, 0.f, 45.f }),
+  model_node(2,  "node3", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(3,  "node4", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(3,  "node5", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(2,  "node6", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(0,  "node6", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(3,  "node7", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(3,  "node8", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f })
 };
+
+model_node* find_node(const char *pname)
+{
+  for (auto &pnode : nodes_hierarchy) {
+    if (!strcmp(pnode.get_name(), pname)) {
+      return &pnode;
+    }
+  }
+  return nullptr;
+}
 
 /**
 * prepare_nodes
@@ -74,44 +84,62 @@ void print_childs(const model_node* pnodes, int count)
   for (int i = 0; i < count; i++) {
     const model_node* pnode = &pnodes[i];
     printf(" parent: %d   \"%s\"\n", i, pnode->get_name());
-    for (size_t j = 0; j < pnode->get_num_childs(); j++) {
-      const model_node* pchild = &pnodes[j];
-      printf("   child: %d  \"%s\"\n",
-        pchild->get_parent_id(), pchild->get_name());
+    for (int j = 0; j < pnode->get_num_childs(); j++) {
+      const model_node* pchild = &pnodes[pnode->get_child(j)];
+      printf("   this child \"%s\" (parent: %d)\n",
+        pchild->get_name(), pchild->get_parent_id());
     }
   }
   printf("\n");
 }
 
+glm::vec3 centers[arrsize(nodes_hierarchy)];
+
+GLUquadric* psphere = nullptr;
+
 void change_coord_system(model_node* pnodes, int count, const obj_importer *pimp)
 {
-  glm::vec3 center_coord;
+  model_node* pnode, *pparent;
+  obj_importer::mesh* pmesh;
+  /* compute all nodes center */
   for (int i = 0; i < count; i++) {
-    model_node* pnode = &pnodes[i];
-    obj_importer::mesh* pmesh = pimp->get_mesh(i);
-    center_coord = barycenter(pnode->get_bbox(), pmesh->get_verts(), pmesh->get_num_verts());
-    pnode->set_position(center_coord);
+    pnode = &pnodes[i];
+    pmesh = pimp->get_mesh(i);
+    pparent = &pnodes[pnode->get_parent_id()];
+    centers[i] = barycenter(pnode->get_bbox(), pmesh->get_verts(), pmesh->get_num_verts());
+  }
+
+#if 1
+  for (int i = 0; i < count; i++) {
+    glm::vec3 delta;
+    pnode = &pnodes[i];
+    pmesh = pimp->get_mesh(i);
+    pparent = &pnodes[pnode->get_parent_id()];
+    delta = (pnode->get_parent_id() != -1) ? centers[i] - centers[pnode->get_parent_id()] : glm::vec3(0.f, 0.f, 0.f);
+    pnode->set_position(delta);
 
     /* handle pendulum node */
-    if (!strcmp(pnode->get_name(), "node3")) {
-      /* find top of the model */
-      assert(pnode->get_parent_id() != -1 && "parent node is -1! this is root");
-      model_node* pparent = &pnodes[pnode->get_parent_id()];
-      const glm::vec3 &vmin = pnode->get_bbox().vec_min;
-      const glm::vec3 &vmax = pnode->get_bbox().vec_max;
-      const glm::vec3& pos = pnode->get_pos();
-      printf("found pendulum node!  pos( %f %f %f )  bbox{ min( %f %f %f ), max( %f %f %f ) }\n", 
-        pos.x, pos.y, pos.z,
-        vmin.x, vmin.y, vmin.z,
-        vmax.x, vmax.y, vmax.z);
-      printf("found pendulum node!  pos( %f %f %f )  bbox{ min( %f %f %f ), max( %f %f %f ) }\n",
-        pos.x, pos.y, pos.z,
-        vmin.x, vmin.y, vmin.z,
-        vmax.x, vmax.y, vmax.z);
-      glm::vec3 attach_pos = glm::min(pparent->get_bbox().vec_max, pnode->get_bbox().vec_max);
-      
-    }
+    //if (!strcmp(pnode->get_name(), "node3")) {
+    //  /* find top of the model */
+    //  assert(pnode->get_parent_id() != -1 && "parent node is -1! this is root");
+    //  model_node* pparent = &pnodes[pnode->get_parent_id()];
+    //  const glm::vec3 &vmin = pnode->get_bbox().vec_min;
+    //  const glm::vec3 &vmax = pnode->get_bbox().vec_max;
+    //  const glm::vec3& pos = pnode->get_pos();
+    //  printf("found pendulum node!  pos( %f %f %f )  bbox{ min( %f %f %f ), max( %f %f %f ) }\n", 
+    //    pos.x, pos.y, pos.z,
+    //    vmin.x, vmin.y, vmin.z,
+    //    vmax.x, vmax.y, vmax.z);
+    //  glm::vec3 attach_pos = glm::min(pparent->get_bbox().vec_max, pnode->get_bbox().vec_max);
+    //}
+    transform_verts(pmesh->get_verts(), pmesh->get_num_verts(), glm::translate(glm::mat4x4(1.f), -centers[i]));
+
+    bbox_t govno;
+    glm::vec3 null_center = barycenter(govno, pmesh->get_verts(), pmesh->get_num_verts());
+    printf("node %d   null_center= ( %f %f %f )\n", i, null_center.x, null_center.y, null_center.z);
+    //assert(null_center == glm::vec3(0.f, 0.f, 0.f) && "verts translation incorrect");
   }
+#endif
 }
 
 class pendulum_vis
@@ -275,6 +303,14 @@ int main(int argc, char *argv[])
 
   prepare_nodes(nodes_hierarchy, arrsize(nodes_hierarchy));
   print_childs(nodes_hierarchy, arrsize(nodes_hierarchy));
+  change_coord_system(nodes_hierarchy, arrsize(nodes_hierarchy), &obj);
+
+  model_node* ppendulum_node = find_node("node3");
+  model_node* pload0 = find_node("node4");
+  model_node* pload1 = find_node("node5");
+  assert(ppendulum_node && "ppendulum_node was nullptr!");
+
+  psphere = gluNewQuadric();
 
   glEnableClientState(GL_VERTEX_ARRAY);
   glEnableClientState(GL_NORMAL_ARRAY);
@@ -283,8 +319,34 @@ int main(int argc, char *argv[])
     glLoadIdentity();
     current_time = get_time();
     glTranslatef(0.f, -10.f, -60.f);
-    glRotatef(180.f, 0.f, 1.f, 0.f);
+    glRotatef(current_time, 0.f, 1.f, 0.f);
+
+    constexpr float deg = 90.f;
+    float sinv = sinf(current_time);
+    ppendulum_node->set_rotation({ 0.f, 0.f, sinv * deg});
+    pload0->set_position({ 0.f, sinv * 10.f, 0.f });
+    pload1->set_position({ 0.f, sinv * -10.f, 0.f });
+
     draw_model();
+
+    /* draw centers */
+    GLint old_depth_mode;
+    glDisable(GL_LIGHTING);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glGetIntegerv(GL_DEPTH_FUNC, &old_depth_mode);
+    glDepthFunc(GL_ALWAYS);
+    for (size_t i = 0; i < arrsize(centers); i++) {
+      glm::vec3& center = centers[i];
+      glPushAttrib(GL_CURRENT_BIT);
+      glColor3f(0.f, 1.f, 0.f);
+      glTranslatef(center.x, center.y, center.z);
+      gluCylinder(psphere, 1.0, 0., 1.0, 10, 10);
+      glTranslatef(-center.x, -center.y, -center.z);
+      glPopAttrib();
+    }
+    glDepthFunc(old_depth_mode);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glEnable(GL_LIGHTING);
     SDL_GL_SwapWindow(pwindow);
   }
   glDisableClientState(GL_VERTEX_ARRAY);

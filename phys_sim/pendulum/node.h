@@ -46,8 +46,8 @@ public:
   inline bool is_root() const { return m_parent == -1; }
   inline int  get_parent_id() const { return m_parent; }
   inline const char* get_name() const { return m_pname; }
-  inline const glm::vec3& get_pos() const { return m_pos; }
-  inline const glm::vec3& get_rotation() const { return m_rotation; }
+  inline glm::vec3& get_pos() { return m_pos; }
+  inline glm::vec3& get_rotation() { return m_rotation; }
 
   inline int get_num_childs() const { return m_num_childs; }
   inline int get_child(int idx) const {
@@ -60,7 +60,7 @@ public:
     m_childs[m_num_childs++] = idx;
   }
 
-  inline void set_position(glm::vec3& pos) { m_pos = pos; }
-  inline void set_rotation(glm::vec3& angles) { m_rotation = angles; }
+  inline void set_position(glm::vec3 pos) { m_pos = pos; }
+  inline void set_rotation(glm::vec3 angles) { m_rotation = angles; }
   inline bbox_t& get_bbox() { return m_bbox; }
 };

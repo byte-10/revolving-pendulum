@@ -282,6 +282,17 @@ void obj_importer::unload()
 	}
 }
 
+inline size_t obj_importer::find_node_by_name(const char* pname)
+{
+	for (size_t i = 0; i < get_num_meshes(); i++) {
+		mesh* pmesh = get_mesh(i);
+		if (pmesh && !strcmp(pmesh->get_name(), pname)) {
+			return i;
+		}
+	}
+	return bad_index;
+}
+
 bool obj_importer::mesh::prepare_data(
 	const tinyobj::attrib_t* attrib,
 	const tinyobj::shape_t* pshape)
