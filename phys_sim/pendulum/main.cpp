@@ -169,6 +169,40 @@ void update_viewport(int width, int height)
   glMatrixMode(GL_MODELVIEW);
 }
 
+bool get_coord_from_depth(glm::vec3 &dst, glm::ivec4 viewport, glm::ivec2 coord)
+{
+  float depth;
+  glm::mat4x4 modelview;
+  glm::mat4x4 projection;
+  glGetFloatv(GL_MODELVIEW_MATRIX, glm::value_ptr(modelview));
+  glGetFloatv(GL_PROJECTION_MATRIX, glm::value_ptr(projection));
+  glReadPixels(coord.x, coord.y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth);
+  if (depth == 1.f) 
+    return false;
+
+  glm::dvec3   dcoord;
+  glm::dmat4x4 dmodelview(modelview);
+  glm::dmat4x4 dprojection(projection);
+  gluUnProject((double)coord.x, (double)coord.y, depth,
+    glm::value_ptr(dmodelview),
+    glm::value_ptr(dprojection),
+    glm::value_ptr(viewport),
+    &dcoord.x, &dcoord.y, &dcoord.z);
+  dst = glm::vec3(dcoord);
+  return true;
+}
+
+int get_id_from_coord(glm::ivec4 viewport, glm::ivec2 coord)
+{
+  int stencil_value;
+  glm::vec3 world_pos;
+  if (get_coord_from_depth(world_pos, viewport, coord)) {
+    glReadPixels(coord.x, coord.y, 1, 1, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, &stencil_value);
+    return stencil_value;
+  }
+  return -1;
+}
+
 bool handle_events()
 {
   SDL_Event event;
@@ -266,6 +300,7 @@ int main(int argc, char *argv[])
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 8);
+  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
   ctx = SDL_GL_CreateContext(pwindow);
   if (!ctx) {
