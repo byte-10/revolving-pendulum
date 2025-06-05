@@ -16,15 +16,15 @@
 #define arrsize(x) (sizeof(x) / sizeof(x[0]))
 
 model_node nodes_hierarchy[] = {
-  model_node(-1, "node0", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(0,  "node1", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(0,  "node2", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(2,  "node3", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(3,  "node4", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(3,  "node5", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(0,  "node6", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(3,  "node7", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(3,  "node8", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f })
+  model_node(-1, "node0", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(0,  "node1", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(0,  "node2", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(2,  "node3", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(3,  "node4", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(3,  "node5", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(0,  "node6", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(3,  "node7", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } ),
+  model_node(3,  "node8", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } )
 };
 
 SDL_Window*   pwindow;
@@ -336,7 +336,18 @@ void draw_recursive(int myid)
   glRotatef(angles.z, 0.f, 0.f, 1.f);
 
   obj_importer::mesh* pmesh = obj.get_mesh(myid);
+
+  /* set material parameters */
+  const model_node_material& mat = pnode->get_material();
+  glMaterialfv(GL_FRONT, GL_AMBIENT, glm::value_ptr(mat.get_ambient()));
+  glMaterialfv(GL_FRONT, GL_DIFFUSE, glm::value_ptr(mat.get_diffuse()));
+  glMaterialfv(GL_FRONT, GL_SPECULAR, glm::value_ptr(mat.get_specular()));
+  glMaterialf(GL_FRONT, GL_SHININESS, mat.get_shininess());
+
+  /* enable stencil writing */
   glStencilFunc(GL_ALWAYS, myid, 0xFF);
+
+  /* set vertex attrib pointers */
   glVertexPointer(3, GL_FLOAT, 0, pmesh->get_verts());
   glNormalPointer(GL_FLOAT, 0, pmesh->get_normals());
   glDrawArrays(GL_TRIANGLES, 0, pmesh->get_num_verts());
@@ -356,9 +367,11 @@ void draw_recursive(int myid)
 
 void draw_model()
 {
+  glPushAttrib(GL_CURRENT_BIT);
   glStencilMask(0xFF); //enable stencil writing
   draw_recursive(0);
   glStencilMask(0x00); //disable writing
+  glPopAttrib();
 }
 
 void draw_debug_sphere(glm::vec3 pos, glm::vec3 color)
@@ -452,6 +465,56 @@ bool stencil_buffer_available()
   return true;
 }
 
+void center_load_disks()
+{
+  model_node* pldisk1 = find_node("node4");
+  model_node* pldisk2 = find_node("node5");
+  assert(pldisk1 && "node4 not found");
+  assert(pldisk2 && "node5 not found");
+  assert(pldisk1->get_parent_id() == pldisk2->get_parent_id() && "disks parent is different!");
+  model_node* pparent = &nodes_hierarchy[pldisk2->get_parent_id()];
+  //pparent->get_
+}
+
+/**
+* setup_pendulum_materials
+*/
+void setup_pendulum_materials()
+{
+  model_node_material red_plastic(
+    { 0.1f, 0.0f, 0.0f, 1.0f },
+    { 0.2f, 0.0f, 0.0f, 1.0f },
+    { 0.8f, 0.8f, 0.8f, 1.0f },
+    32.0f
+  );
+
+  nodes_hierarchy[0].set_material(red_plastic);
+  nodes_hierarchy[1].set_material(red_plastic);
+  nodes_hierarchy[2].set_material(red_plastic);
+  nodes_hierarchy[3].set_material(red_plastic);
+  nodes_hierarchy[4].set_material(red_plastic);
+  nodes_hierarchy[5].set_material(red_plastic);
+  nodes_hierarchy[6].set_material(red_plastic);
+  nodes_hierarchy[7].set_material(red_plastic);
+  nodes_hierarchy[8].set_material(red_plastic);
+}
+
+template<int light_index>
+class gl_light
+{
+public:
+  void enable() { glEnable(GL_LIGHT0 + light_index); }
+  void disable() { glDisable(GL_LIGHT0 + light_index); }
+  void set_colors(glm::vec4 light_diffuse, glm::vec4 light_specular) {
+    glLightfv(GL_LIGHT0 + light_index, GL_DIFFUSE, glm::value_ptr(light_diffuse));
+    glLightfv(GL_LIGHT0 + light_index, GL_SPECULAR, glm::value_ptr(light_specular));
+  }
+  void set_pos(glm::vec3& pos) { glLightfv(GL_LIGHT0 + light_index, GL_POSITION, glm::value_ptr(pos)); }
+  void set_pos(glm::vec3 pos) { glLightfv(GL_LIGHT0 + light_index, GL_POSITION, glm::value_ptr(pos)); }
+};
+
+gl_light<0> main_light;
+
 int main(int argc, char *argv[])
 {
   int width, height;
@@ -512,25 +575,16 @@ int main(int argc, char *argv[])
   glEnable(GL_LIGHTING);
   //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-  GLfloat mat_diffuse[] = { 0.8f, 0.8f, 0.8f, 1.0f };
-  GLfloat mat_specular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-  GLfloat mat_shininess = 50.0f;
-  glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, mat_diffuse);
-  glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, mat_specular);
-  glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, mat_shininess);
-
-  glm::vec3 position(0.f, 100.f, 0.f);
-  GLfloat light_diffuse[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-  GLfloat light_specular[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-  glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
-  glLightfv(GL_LIGHT0, GL_SPECULAR, light_specular);
-  glLightfv(GL_LIGHT0, GL_POSITION, glm::value_ptr(position));
-  glEnable(GL_LIGHT0);
+  /* setup main light */
+  main_light.enable();
+  main_light.set_colors({ 1.f, 1.f, 1.f, 1.f }, { 1.f, 1.f, 1.f, 1.f });
+  main_light.set_pos({ 0.f, 100.f, 100.f });
 
   prepare_nodes(nodes_hierarchy, arrsize(nodes_hierarchy));
   print_childs(nodes_hierarchy, arrsize(nodes_hierarchy));
   change_coord_system(nodes_hierarchy, arrsize(nodes_hierarchy), &obj);
   print_nodes_barycenter(&obj);
+  setup_pendulum_materials();
 
   model_node* ppendulum_node = find_node("node3");
   int         pendulum_node_idx = get_node_index("node3");
@@ -554,8 +608,8 @@ int main(int argc, char *argv[])
     constexpr float deg = 5.f;
     float sinv = sinf(current_time);
     ppendulum_node->set_rotation({ 0.f, 0.f, sinv * deg});
-    pload0->set_position({ 0.f, sinv * 10.f, 0.f });
-    pload1->set_position({ 0.f, sinv * -10.f, 0.f });
+    //pload0->set_position({ 0.f, sinv * 10.f, 0.f });
+    //pload1->set_position({ 0.f, sinv * -10.f, 0.f });
 
     glEnableClientState(GL_NORMAL_ARRAY);
     draw_model();
