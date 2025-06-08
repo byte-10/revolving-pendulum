@@ -2,6 +2,7 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <gl/GLU.h>
+#include <intrin.h> //__debugbreak
 #pragma comment(lib, "opengl32.lib")
 #pragma comment(lib, "glu32.lib")
 
@@ -12,6 +13,39 @@
 #include <glm/gtc/type_ptr.hpp> //glm::value
 #include "wavefront_obj.h"
 #include "node.h"
+#include "banner.h"
+#include "font.h"
+
+#ifdef _DEBUG
+#define CASE_TO_STR(constant) case constant: return #constant;
+
+const char* gl_error_enum_to_string(GLenum error)
+{
+  switch (error) {
+    CASE_TO_STR(GL_NO_ERROR)
+      CASE_TO_STR(GL_INVALID_ENUM)
+      CASE_TO_STR(GL_INVALID_VALUE)
+      CASE_TO_STR(GL_INVALID_OPERATION)
+      CASE_TO_STR(GL_INVALID_FRAMEBUFFER_OPERATION)
+      CASE_TO_STR(GL_OUT_OF_MEMORY)
+  default:
+    return "Unknown GL error";
+  }
+  return nullptr;
+}
+
+#define GL_CALL(func) do {\
+	func;\
+	GLenum gl_current_error = glGetError(); \
+	if(gl_current_error != GL_NO_ERROR) { \
+		fprintf(stderr, "[GL ERROR] Call " #func " failed with error (%s) code %d (0x%X)\n", gl_error_enum_to_string(gl_current_error), gl_current_error, gl_current_error); \
+		__debugbreak(); \
+	}\
+} while(0.0);
+
+#else
+#define GL_CALL(func)
+#endif
 
 #define arrsize(x) (sizeof(x) / sizeof(x[0]))
 
@@ -27,14 +61,34 @@ model_node nodes_hierarchy[] = {
   model_node(3,  "node8", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } )
 };
 
-SDL_Window*   pwindow;
-SDL_GLContext ctx;
-obj_importer  obj;
-float         current_time;
+SDL_Window*   g_pwindow;
+SDL_GLContext g_ctx;
+obj_importer  g_obj;
+float         g_current_time;
+float         g_last_time;
+float         g_delta_time;
+float         g_FPS;
 glm::ivec2    g_mouse;
 glm::ivec4    g_viewport;
-glm::vec3     centers[arrsize(nodes_hierarchy)];
+glm::vec3     g_centers[arrsize(nodes_hierarchy)];
 GLUquadric*   g_pquadratic = nullptr;
+gl_font       g_msg_font;
+gl_font       g_panel_font;
+GLuint        g_display_texture;
+
+template<int light_index>
+class gl_light
+{
+public:
+  void enable() { glEnable(GL_LIGHT0 + light_index); }
+  void disable() { glDisable(GL_LIGHT0 + light_index); }
+  void set_colors(glm::vec4 light_diffuse, glm::vec4 light_specular) {
+    glLightfv(GL_LIGHT0 + light_index, GL_DIFFUSE, glm::value_ptr(light_diffuse));
+    glLightfv(GL_LIGHT0 + light_index, GL_SPECULAR, glm::value_ptr(light_specular));
+  }
+  void set_pos(glm::vec3& pos) { glLightfv(GL_LIGHT0 + light_index, GL_POSITION, glm::value_ptr(pos)); }
+  void set_pos(glm::vec3 pos) { glLightfv(GL_LIGHT0 + light_index, GL_POSITION, glm::value_ptr(pos)); }
+};
 
 /**
 * barycenter
@@ -158,7 +212,7 @@ void change_coord_system(model_node* pnodes, int count, const obj_importer* pimp
   for (int i = 0; i < count; i++) {
     model_node* pnode = &pnodes[i];
     obj_importer::mesh* pmesh = pimp->get_mesh(i);
-    centers[i] = barycenter(pnode->get_bbox(), pmesh->get_verts(), pmesh->get_num_verts());
+    g_centers[i] = barycenter(pnode->get_bbox(), pmesh->get_verts(), pmesh->get_num_verts());
   }
 
   for (int i = 0; i < count; i++) {
@@ -186,7 +240,7 @@ void change_coord_system(model_node* pnodes, int count, const obj_importer* pimp
 
       // no empty intersection?
       if (inter_min.x <= inter_max.x && inter_min.y <= inter_max.y && inter_min.z <= inter_max.z) {
-        centers[i] = glm::vec3(
+        g_centers[i] = glm::vec3(
           (inter_min.x + inter_max.x) * 0.5f, //X center of intersection
           inter_max.y, //intersection bound
           (inter_min.z + inter_max.z) * 0.5f //Z center of intersection
@@ -200,16 +254,10 @@ void change_coord_system(model_node* pnodes, int count, const obj_importer* pimp
     }
 
     // compute position of parent. (0,0,0) coord for root node
-    pnode->set_position(pparent ? (centers[i] - centers[parent_id]) : glm::vec3(0.f, 0.f, 0.f));
-    transform_verts(pmesh->get_verts(), pmesh->get_num_verts(), glm::translate(glm::mat4x4(1.f), -centers[i]));
+    pnode->set_position(pparent ? (g_centers[i] - g_centers[parent_id]) : glm::vec3(0.f, 0.f, 0.f));
+    transform_verts(pmesh->get_verts(), pmesh->get_num_verts(), glm::translate(glm::mat4x4(1.f), -g_centers[i]));
   }
 }
-
-class pendulum_vis
-{
-
-public:
-};
 
 float get_time()
 {
@@ -335,7 +383,7 @@ void draw_recursive(int myid)
   glRotatef(angles.y, 0.f, 1.f, 0.f);
   glRotatef(angles.z, 0.f, 0.f, 1.f);
 
-  obj_importer::mesh* pmesh = obj.get_mesh(myid);
+  obj_importer::mesh* pmesh = g_obj.get_mesh(myid);
 
   /* set material parameters */
   const model_node_material& mat = pnode->get_material();
@@ -410,8 +458,8 @@ void draw_centers()
   glDepthFunc(GL_ALWAYS);
   glPushAttrib(GL_CURRENT_BIT);
   glColor3f(0.5f, 0.5f, 0.5f);
-  for (size_t i = 0; i < arrsize(centers); i++) {
-    glm::vec3& center = centers[i];
+  for (size_t i = 0; i < arrsize(g_centers); i++) {
+    glm::vec3& center = g_centers[i];
     glTranslatef(center.x, center.y, center.z);
     gluSphere(g_pquadratic, 0.5, 10, 10);
     glTranslatef(-center.x, -center.y, -center.z);   
@@ -499,19 +547,47 @@ void setup_pendulum_materials()
   nodes_hierarchy[8].set_material(red_plastic);
 }
 
-template<int light_index>
-class gl_light
+bool init_fonts()
 {
-public:
-  void enable() { glEnable(GL_LIGHT0 + light_index); }
-  void disable() { glDisable(GL_LIGHT0 + light_index); }
-  void set_colors(glm::vec4 light_diffuse, glm::vec4 light_specular) {
-    glLightfv(GL_LIGHT0 + light_index, GL_DIFFUSE, glm::value_ptr(light_diffuse));
-    glLightfv(GL_LIGHT0 + light_index, GL_SPECULAR, glm::value_ptr(light_specular));
-  }
-  void set_pos(glm::vec3& pos) { glLightfv(GL_LIGHT0 + light_index, GL_POSITION, glm::value_ptr(pos)); }
-  void set_pos(glm::vec3 pos) { glLightfv(GL_LIGHT0 + light_index, GL_POSITION, glm::value_ptr(pos)); }
-};
+  bool status=true;
+  status &= g_msg_font.load_ttf("sans-bold.ttf", 24.f);
+  status &= g_panel_font.load_ttf("sevensegment.ttf");
+  return status;
+}
+
+bool init_pendulum_LCD()
+{
+  glGenTextures(1, &g_display_texture);
+  glBindTexture(GL_TEXTURE_2D, g_display_texture);
+
+  //TODO: create empty texture
+
+}
+
+void shutdown_pendulum_LCD()
+{
+  glDeleteTextures(1, &g_display_texture);
+}
+
+void draw_pendulum_LCD(int sw, int sh, int lcdw, int lcdh)
+{
+  glViewport(0, 0, lcdw, lcdh);
+  gl_font::begin_text(sw, sh);
+  g_panel_font.line_feed_mode(LF_X);
+  g_panel_font.move_to(20.f, 20.f);
+  gl_font::end_text();
+
+  //glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, )
+}
+
+void draw_overlay(float width, float height)
+{
+  g_msg_font.line_feed_mode(LF_X);
+  g_msg_font.move_to(10.f, 0.f);
+  g_msg_font.set_color(255, 255, 255, 255);
+  g_msg_font.draw_textf("This is debug text!");
+  g_msg_font.draw_textf("This is debug text on next line!");
+}
 
 gl_light<0> main_light;
 
@@ -522,10 +598,13 @@ int main(int argc, char *argv[])
     printf("SDL_Init() failed! Error: \"%s\"", SDL_GetError());
     return 1;
   }
+#ifndef _DEBUG1
+  show_banner();
+#endif
   printf("loading model...\n");
-  if (!obj.load("pendulum.obj")) {
-    SDL_GL_DeleteContext(ctx);
-    SDL_DestroyWindow(pwindow);
+  if (!g_obj.load("pendulum0004.obj")) {
+    SDL_GL_DeleteContext(g_ctx);
+    SDL_DestroyWindow(g_pwindow);
     SDL_Quit();
     return 1;
   }
@@ -536,24 +615,24 @@ int main(int argc, char *argv[])
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 8);
 
-  pwindow = SDL_CreateWindow("pendulum graphics", 
+  g_pwindow = SDL_CreateWindow("pendulum graphics", 
     SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 1024, 
     SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE);
-  if (!pwindow) {
+  if (!g_pwindow) {
     printf("SDL_CreateWindow() failed! Error: \"%s\"", SDL_GetError());
     return 1;
   }
 
-  ctx = SDL_GL_CreateContext(pwindow);
-  if (!ctx) {
+  g_ctx = SDL_GL_CreateContext(g_pwindow);
+  if (!g_ctx) {
     printf("SDL_GL_CreateContext() failed! Error: \"%s\"", SDL_GetError());
     return 1;
   }
-  if (SDL_GL_MakeCurrent(pwindow, ctx) < 0) {
+  if (SDL_GL_MakeCurrent(g_pwindow, g_ctx) < 0) {
     printf("SDL_GL_MakeCurrent() failed! Error: \"%s\"", SDL_GetError());
     return 1;
   }
-  SDL_GetWindowSize(pwindow, &width, &height);
+  SDL_GetWindowSize(g_pwindow, &width, &height);
   update_viewport(width, height); //update viewport for current window size
 
   int num_keys;
@@ -572,7 +651,6 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  glEnable(GL_LIGHTING);
   //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
   /* setup main light */
@@ -582,9 +660,11 @@ int main(int argc, char *argv[])
 
   prepare_nodes(nodes_hierarchy, arrsize(nodes_hierarchy));
   print_childs(nodes_hierarchy, arrsize(nodes_hierarchy));
-  change_coord_system(nodes_hierarchy, arrsize(nodes_hierarchy), &obj);
-  print_nodes_barycenter(&obj);
+  change_coord_system(nodes_hierarchy, arrsize(nodes_hierarchy), &g_obj);
+  print_nodes_barycenter(&g_obj);
   setup_pendulum_materials();
+  init_fonts();
+  init_pendulum_LCD();
 
   model_node* ppendulum_node = find_node("node3");
   int         pendulum_node_idx = get_node_index("node3");
@@ -596,24 +676,30 @@ int main(int argc, char *argv[])
   g_pquadratic = gluNewQuadric();
 
   glm::vec3 worldpos;
-  glEnableClientState(GL_VERTEX_ARRAY);
+  glClearColor(80 / 255.f, 90 / 255.f, 100/255.f, 1.f);
   
   while (handle_events()) {
+    SDL_GetWindowSize(g_pwindow, &width, &height);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
     glLoadIdentity();
-    current_time = get_time();
-    glTranslatef(0.f, -10.f, -60.f);
+    g_current_time = get_time();
+    glTranslatef(0.f, -15.f, -60.f);
     glRotatef(180.f, 0.f, 1.f, 0.f);
 
     constexpr float deg = 5.f;
-    float sinv = sinf(current_time);
+    float sinv = sinf(g_current_time);
     ppendulum_node->set_rotation({ 0.f, 0.f, sinv * deg});
     //pload0->set_position({ 0.f, sinv * 10.f, 0.f });
     //pload1->set_position({ 0.f, sinv * -10.f, 0.f });
 
+    glEnable(GL_LIGHTING);
+    glEnableClientState(GL_VERTEX_ARRAY);
     glEnableClientState(GL_NORMAL_ARRAY);
     draw_model();
     glDisableClientState(GL_NORMAL_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisable(GL_LIGHTING);
+
     //draw_centers();
     //draw_debug_sphere(centers[pendulum_node_idx], glm::vec3(0.f, 0.f, 1.f));
 
@@ -629,12 +715,19 @@ int main(int argc, char *argv[])
         draw_debug_sphere(worldpos, glm::vec3(0.f, 0.f, 0.5f));
       }
     }
-    SDL_GL_SwapWindow(pwindow);
+
+    gl_font::begin_text(width, height);   
+    g_panel_font.move_to(100, 100);
+    g_panel_font.set_color(255, 255, 0, 255);
+    g_panel_font.draw_textf("sin value: %f", sinv);
+    draw_overlay(width, height);
+    gl_font::end_text();
+
+    SDL_GL_SwapWindow(g_pwindow);
   }
-  glDisableClientState(GL_VERTEX_ARRAY);
-  
-  SDL_GL_DeleteContext(ctx);
-  SDL_DestroyWindow(pwindow);
+
+  SDL_GL_DeleteContext(g_ctx);
+  SDL_DestroyWindow(g_pwindow);
   SDL_Quit();
   return 0;
 }
