@@ -61,6 +61,90 @@ model_node nodes_hierarchy[] = {
   model_node(3,  "node8", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f } )
 };
 
+class pendulum_LCD
+{
+  int    m_width;
+  int    m_height;
+  GLuint m_display_texture;
+public:
+  pendulum_LCD(int w, int h) :
+    m_width(w), m_height(h), m_display_texture(0) {}
+
+  /**
+  * init pendulum LCD render texture
+  */
+  bool init() {
+    GLenum error;
+    assert(m_display_texture == 0 && "already created texture");
+    glGenTextures(1, &m_display_texture);
+    glBindTexture(GL_TEXTURE_2D, m_display_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, m_width, m_height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    error = glGetError();
+    if (error != GL_NO_ERROR) {
+      SDL_LogError(0, "pendulum_LCD::init(): glTexImage2D() failed with error %d (0x%x)!", error, error);
+      return false;
+    }
+    printf("pendulum_LCD::init(): OK\n");
+    return true;
+  }
+
+  void shutdown() {
+    glDeleteTextures(1, &m_display_texture);
+  }
+
+  void update(gl_font& ss_font, gl_font& text_font) {
+    /* fast manual settings */
+    constexpr glm::vec4 CLEAR_COLOR(0.5f, 0.5f, 0.5f, 1.f);
+    constexpr glm::vec4 BORDER_COLOR(0.5f, 0.5f, 0.5f, 1.f);
+
+    glm::vec4  old_clear;
+    glm::ivec4 old_viewport;
+    glGetIntegerv(GL_VIEWPORT, glm::value_ptr(old_viewport)); //save viewport
+    glViewport(0, 0, m_width, m_height);
+    gl_font::begin_text(m_width, m_height);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, glm::value_ptr(old_clear)); //save clear color
+    glClearColor(CLEAR_COLOR.x, CLEAR_COLOR.y, CLEAR_COLOR.z, CLEAR_COLOR.w);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ss_font.line_feed_mode(LF_X);
+    ss_font.move_to(20.f, 20.f);
+    ss_font.draw_text("0123456789");
+    glBindTexture(GL_TEXTURE_2D, m_display_texture);
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, m_width, m_height, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    gl_font::end_text();
+    glViewport(old_viewport.x, old_viewport.y, old_viewport.z, old_viewport.w); //restore viewport
+    glClearColor(old_clear.x, old_clear.y, old_clear.z, old_clear.w); //restore clear color
+  }
+
+  /**
+  * draw this in ortho
+  */
+  void debug_draw(glm::vec2 pos) {
+    static const struct vert_s {
+      glm::vec3 pos; //z=0
+      glm::vec2 uv;
+    } verts[] = {
+      { { pos.x,          pos.y,             0.f }, { 0.f, 1.f } },
+      { { pos.x + m_width, pos.y,            0.f }, { 1.f, 1.f } },
+      { { pos.x + m_width, pos.y + m_height, 0.f }, { 1.f, 0.f } },
+      { { pos.x,          pos.y + m_height,  0.f }, { 0.f, 0.f } }
+    };
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glBindTexture(GL_TEXTURE_2D, m_display_texture);
+    glVertexPointer(3, GL_FLOAT, sizeof(vert_s), &verts[0].pos);
+    glTexCoordPointer(2, GL_FLOAT, sizeof(vert_s), &verts[0].uv);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4); //drawing textured quad
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
+  }
+};
+
 SDL_Window*   g_pwindow;
 SDL_GLContext g_ctx;
 obj_importer  g_obj;
@@ -68,13 +152,17 @@ float         g_current_time;
 float         g_last_time;
 float         g_delta_time;
 float         g_FPS;
+float         g_frametime_begin;
+float         g_frametime;
+float         g_simtime_begin;
+float         g_simtime;
 glm::ivec2    g_mouse;
 glm::ivec4    g_viewport;
 glm::vec3     g_centers[arrsize(nodes_hierarchy)];
 GLUquadric*   g_pquadratic = nullptr;
 gl_font       g_msg_font;
 gl_font       g_panel_font;
-GLuint        g_display_texture;
+pendulum_LCD  g_LCD(400, 200);
 
 template<int light_index>
 class gl_light
@@ -413,15 +501,6 @@ void draw_recursive(int myid)
   glPopMatrix();
 }
 
-void draw_model()
-{
-  glPushAttrib(GL_CURRENT_BIT);
-  glStencilMask(0xFF); //enable stencil writing
-  draw_recursive(0);
-  glStencilMask(0x00); //disable writing
-  glPopAttrib();
-}
-
 void draw_debug_sphere(glm::vec3 pos, glm::vec3 color)
 {
   GLint old_depth_mode;
@@ -529,64 +608,73 @@ void center_load_disks()
 */
 void setup_pendulum_materials()
 {
-  model_node_material red_plastic(
-    { 0.1f, 0.0f, 0.0f, 1.0f },
-    { 0.2f, 0.0f, 0.0f, 1.0f },
-    { 0.8f, 0.8f, 0.8f, 1.0f },
-    32.0f
-  );
-
-  nodes_hierarchy[0].set_material(red_plastic);
-  nodes_hierarchy[1].set_material(red_plastic);
-  nodes_hierarchy[2].set_material(red_plastic);
-  nodes_hierarchy[3].set_material(red_plastic);
-  nodes_hierarchy[4].set_material(red_plastic);
-  nodes_hierarchy[5].set_material(red_plastic);
-  nodes_hierarchy[6].set_material(red_plastic);
-  nodes_hierarchy[7].set_material(red_plastic);
-  nodes_hierarchy[8].set_material(red_plastic);
+  nodes_hierarchy[0].set_material({ {0.2, 0.2, 0.2, 1.0}, {0.4, 0.4, 0.4, 1.0}, {0.1, 0.1, 0.1, 1.0}, 10.0 }); // node0
+  nodes_hierarchy[1].set_material({ {0.1, 0.1, 0.2, 1.0}, {0.3, 0.3, 0.5, 1.0}, {0.7, 0.7, 0.8, 1.0}, 80.0 }); // node1
+  nodes_hierarchy[2].set_material({ {0.25, 0.25, 0.25, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.8, 0.8, 0.8, 1.0}, 50.0 }); // node2 
+  nodes_hierarchy[3].set_material({ {0.3, 0.3, 0.3, 1.0}, {0.6, 0.6, 0.6, 1.0}, {0.9, 0.9, 0.9, 1.0}, 100.0 });// node3 
+  nodes_hierarchy[4].set_material({ {0.15, 0.1, 0.05, 1.0}, {0.4, 0.3, 0.2, 1.0}, {0.7, 0.6, 0.5, 1.0}, 60.0 });// node4 
+  nodes_hierarchy[5].set_material({ {0.1, 0.1, 0.15, 1.0}, {0.3, 0.3, 0.5, 1.0}, {0.8, 0.8, 0.9, 1.0}, 70.0 });// node5 
+  nodes_hierarchy[6].set_material({ {0.4, 0.4, 0.4, 1.0}, {0.7, 0.7, 0.7, 1.0}, {0.5, 0.5, 0.5, 1.0}, 30.0 });// node6
+  nodes_hierarchy[7].set_material({ {0.2, 0.2, 0.2, 1.0}, {0.8, 0.8, 0.8, 1.0}, {1.0, 1.0, 1.0, 1.0}, 120.0 });// node7 
+  nodes_hierarchy[8].set_material({ {0.25, 0.25, 0.25, 1.0}, {0.5, 0.5, 0.5, 1.0}, {0.3, 0.3, 0.3, 1.0}, 20.0 });// node8
 }
+
 
 bool init_fonts()
 {
   bool status=true;
-  status &= g_msg_font.load_ttf("sans-bold.ttf", 24.f);
+  status &= g_msg_font.load_ttf("Courier-Bold.ttf", 18.f);
   status &= g_panel_font.load_ttf("sevensegment.ttf");
   return status;
 }
 
-bool init_pendulum_LCD()
+void update_time()
 {
-  glGenTextures(1, &g_display_texture);
-  glBindTexture(GL_TEXTURE_2D, g_display_texture);
+  g_current_time = get_time();
+  g_delta_time = g_current_time - g_last_time;
+  g_last_time = g_current_time;
 
-  //TODO: create empty texture
+  /* if frame is too fast - clamp delta time to minimum
+  number for prevention division by zero in FPS calc */
+  constexpr float delta_time_min_threshold = 0.00001f;
+  if (g_delta_time < delta_time_min_threshold)
+    g_delta_time = delta_time_min_threshold;
 
+  g_FPS = 1.f / g_delta_time;
 }
 
-void shutdown_pendulum_LCD()
-{
-  glDeleteTextures(1, &g_display_texture);
-}
-
-void draw_pendulum_LCD(int sw, int sh, int lcdw, int lcdh)
-{
-  glViewport(0, 0, lcdw, lcdh);
-  gl_font::begin_text(sw, sh);
-  g_panel_font.line_feed_mode(LF_X);
-  g_panel_font.move_to(20.f, 20.f);
-  gl_font::end_text();
-
-  //glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, )
-}
-
-void draw_overlay(float width, float height)
+void draw_debug_overlay(float width, float height)
 {
   g_msg_font.line_feed_mode(LF_X);
   g_msg_font.move_to(10.f, 0.f);
   g_msg_font.set_color(255, 255, 255, 255);
-  g_msg_font.draw_textf("This is debug text!");
-  g_msg_font.draw_textf("This is debug text on next line!");
+  g_msg_font.draw_textf("Debug overlay enabled");
+  g_msg_font.draw_textf("FPS: %.1f (last frametime: %f | curr frametime: %f)",
+    g_FPS, g_frametime_begin, g_frametime);
+}
+
+void draw_pendulum()
+{
+  /* begin drawing scene */
+  g_frametime_begin = g_current_time;
+  glEnable(GL_LIGHTING);
+  glEnableClientState(GL_VERTEX_ARRAY);
+  glEnableClientState(GL_NORMAL_ARRAY);
+
+  glPushAttrib(GL_CURRENT_BIT);
+  glStencilMask(0xFF); //enable stencil writing
+  draw_recursive(0);
+  glStencilMask(0x00); //disable writing
+  glPopAttrib();
+
+  glDisableClientState(GL_NORMAL_ARRAY);
+  glDisableClientState(GL_VERTEX_ARRAY);
+  glDisable(GL_LIGHTING);
+
+  //draw_centers();
+  //draw_debug_sphere(centers[pendulum_node_idx], glm::vec3(0.f, 0.f, 1.f));
+
+  g_frametime = g_current_time - g_frametime_begin;
 }
 
 gl_light<0> main_light;
@@ -632,6 +720,9 @@ int main(int argc, char *argv[])
     printf("SDL_GL_MakeCurrent() failed! Error: \"%s\"", SDL_GetError());
     return 1;
   }
+
+  SDL_GL_SetSwapInterval(1);
+
   SDL_GetWindowSize(g_pwindow, &width, &height);
   update_viewport(width, height); //update viewport for current window size
 
@@ -664,7 +755,7 @@ int main(int argc, char *argv[])
   print_nodes_barycenter(&g_obj);
   setup_pendulum_materials();
   init_fonts();
-  init_pendulum_LCD();
+  g_LCD.init();
 
   model_node* ppendulum_node = find_node("node3");
   int         pendulum_node_idx = get_node_index("node3");
@@ -680,9 +771,11 @@ int main(int argc, char *argv[])
   
   while (handle_events()) {
     SDL_GetWindowSize(g_pwindow, &width, &height);
+    update_time(); //update time
+    g_LCD.update(g_panel_font, g_msg_font); //draw LCD to texture
+
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
     glLoadIdentity();
-    g_current_time = get_time();
     glTranslatef(0.f, -15.f, -60.f);
     glRotatef(180.f, 0.f, 1.f, 0.f);
 
@@ -692,16 +785,12 @@ int main(int argc, char *argv[])
     //pload0->set_position({ 0.f, sinv * 10.f, 0.f });
     //pload1->set_position({ 0.f, sinv * -10.f, 0.f });
 
-    glEnable(GL_LIGHTING);
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_NORMAL_ARRAY);
-    draw_model();
-    glDisableClientState(GL_NORMAL_ARRAY);
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glDisable(GL_LIGHTING);
+    /* phys simulation here */
+    g_simtime_begin = g_current_time;
+    // YOUR CODE HERE! 
+    g_simtime = g_current_time - g_simtime_begin;
 
-    //draw_centers();
-    //draw_debug_sphere(centers[pendulum_node_idx], glm::vec3(0.f, 0.f, 1.f));
+    draw_pendulum();
 
     //NOTE: K.D.  OBJECT PICKING HERE!  objectid==nodeid
     int objectid = get_id_from_coord(worldpos, g_viewport, g_mouse);
@@ -720,11 +809,14 @@ int main(int argc, char *argv[])
     g_panel_font.move_to(100, 100);
     g_panel_font.set_color(255, 255, 0, 255);
     g_panel_font.draw_textf("sin value: %f", sinv);
-    draw_overlay(width, height);
+    draw_debug_overlay(width, height);
+    g_LCD.debug_draw(glm::vec2(0.f, 200.f));
     gl_font::end_text();
 
     SDL_GL_SwapWindow(g_pwindow);
   }
+  g_LCD.shutdown();
+  g_obj.unload();
 
   SDL_GL_DeleteContext(g_ctx);
   SDL_DestroyWindow(g_pwindow);

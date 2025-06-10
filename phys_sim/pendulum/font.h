@@ -22,6 +22,13 @@ class gl_font
 public:
 	gl_font();
 
+	struct metric {
+		float ascent;
+		float descent;
+		float linegap;
+		float lineheight;
+	};
+
 	void move_to(float x, float y);
 	void move_rel_to(float xr, float yr);
 	void line_feed_mode(int flags);
@@ -32,6 +39,8 @@ public:
 	bool load_ttf_raw(Uint8 *psrc, Uint32 size, float font_size=32.f);
 	void draw_textf(const char* pformat, ...);
 	void draw_text(const char* ptext);
+	//void text_metric(metric& dst);
+	void line_boundsf(float &dstx, float &dsty, const char *pformat, ...);
 	inline float get_font_width() const { return m_font_width; }
 
 	/* drawing text begin/end */

@@ -95,5 +95,5 @@ public:
   inline bbox_t& get_bbox() { return m_bbox; }
   inline const model_node_material& get_material() const { return m_mat; }
   inline model_node_material& get_material() { return m_mat; }
-  inline void set_material(model_node_material& mat) { m_mat = mat; }
+  inline void set_material(model_node_material mat) { m_mat = mat; }
 };

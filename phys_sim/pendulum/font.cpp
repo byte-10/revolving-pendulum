@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <SDL_log.h>
 #include <gl/GLU.h>
+#include <float.h>
+#include <algorithm>
 
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
@@ -43,6 +45,49 @@ void gl_font::draw_text(const char* text)
 
   if (m_resetmode)
     reset(m_resetmode);
+}
+
+//void gl_font::text_metric(metric& dst)
+//{
+//}
+
+void gl_font::line_boundsf(float& dstx, float& dsty, const char* pformat, ...)
+{
+  char buf[512];
+  char* ptr = buf;
+  float x = 0, y = 0;
+  float minx = FLT_MAX, miny = FLT_MAX;
+  float maxx = -FLT_MAX, maxy = -FLT_MAX;
+  va_list argptr;
+  va_start(argptr, pformat);
+  SDL_vsnprintf(buf, sizeof(buf), pformat, argptr);
+  va_end(argptr);
+  while (*ptr) {
+    int c = *ptr;
+    if (c < 32 || c >= 128)
+      continue;
+
+    stbtt_aligned_quad q;
+    stbtt_GetBakedQuad(
+      m_chars_data,
+      512, 512,
+      c - 32,
+      &x, &y,
+      &q,
+      /*opengl_fillrule=*/1
+    );
+    minx = std::min(minx, q.x0);
+    miny = std::min(miny, q.y0);
+    maxx = std::max(maxx, q.x1);
+    maxy = std::max(maxy, q.y1);
+    ptr++;
+  }
+
+  if (minx == FLT_MAX)
+    return;
+
+  dstx = maxx - minx;
+  dsty = maxy - miny;
 }
 
 void gl_font::begin_text(int width, int height)
