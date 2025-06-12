@@ -134,8 +134,8 @@ void gl_font::move_to(float x, float y)
 
 void gl_font::move_rel_to(float xr, float yr)
 {
-  m_curr_x = m_coordx += xr;
-  m_curr_y = m_coordy += yr;
+  m_curr_x += xr;
+  m_curr_y += yr;
 }
 
 void gl_font::line_feed_mode(int flags)

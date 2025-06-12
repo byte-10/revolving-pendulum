@@ -297,6 +297,7 @@ bool obj_importer::mesh::prepare_data(
 	const tinyobj::attrib_t* attrib,
 	const tinyobj::shape_t* pshape)
 {
+	m_name = pshape->name;
 	for (size_t f = 0; f < pshape->mesh.num_face_vertices.size(); ++f) {
 		if (pshape->mesh.num_face_vertices[f] != 3) {
 			assert(false && "face is not triangulated!");

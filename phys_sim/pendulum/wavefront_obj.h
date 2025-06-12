@@ -43,4 +43,6 @@ public:
 		assert(idx < m_meshes.size() && "idx out of bounds");
 		return m_meshes[idx];
 	}
+
+	inline std::vector<mesh*>& get_meshes() { return m_meshes; }
 };

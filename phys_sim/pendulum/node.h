@@ -44,7 +44,7 @@ public:
     m_ambient(ambient),
     m_diffuse(diffuse),
     m_specular(specular),
-    m_shininess(shininess) {}
+    m_shininess(glm::clamp(shininess, 0.f, 128.f)) {}
 
   inline const glm::vec4& get_ambient() const { return m_ambient; }
   inline const glm::vec4& get_diffuse() const { return m_diffuse; }
@@ -67,11 +67,12 @@ class model_node
   int                 m_childs[MAX_CHILDS]{};
   bbox_t              m_bbox;
   model_node_material m_mat;
+  uint32_t            m_texid;
 public:
   model_node(int parent, const char* pname,
     glm::vec3 pos, glm::vec3 rotation) :
     m_parent(parent), m_pname(pname),
-    m_pos(pos), m_rotation(rotation), m_num_childs(0) {}
+    m_pos(pos), m_rotation(rotation), m_num_childs(0), m_texid(0) {}
 
   inline bool is_root() const { return m_parent == -1; }
   inline int  get_parent_id() const { return m_parent; }
@@ -84,11 +85,14 @@ public:
     assert(idx < m_num_childs && "idx out of bounds");
     return m_childs[idx];
   }
-
   inline void add_child(int idx) {
     assert(m_num_childs < MAX_CHILDS && "MAX_CHILDS limit exceeded");
     m_childs[m_num_childs++] = idx;
   }
+
+  inline bool is_texture_available() { return m_texid != 0; }
+  inline uint32_t get_texid() const { return m_texid; }
+  inline void set_texid(uint32_t texid) { m_texid = texid; }
 
   inline void set_position(glm::vec3 pos) { m_pos = pos; }
   inline void set_rotation(glm::vec3 angles) { m_rotation = angles; }

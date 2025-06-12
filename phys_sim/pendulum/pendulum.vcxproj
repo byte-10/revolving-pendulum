@@ -130,7 +130,9 @@
     <ClCompile Include="banner.cpp" />
     <ClCompile Include="builtin_model_gen.cpp" />
     <ClCompile Include="font.cpp" />
+    <ClCompile Include="gl_debug.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="simulation.cpp" />
     <ClCompile Include="stl_import.cpp" />
     <ClCompile Include="wavefront_obj.cpp" />
   </ItemGroup>
@@ -141,7 +143,9 @@
     <ClInclude Include="banner.h" />
     <ClInclude Include="builtin_model_gen.h" />
     <ClInclude Include="font.h" />
+    <ClInclude Include="gl_debug.h" />
     <ClInclude Include="node.h" />
+    <ClInclude Include="simulation.h" />
     <ClInclude Include="stb_truetype.h" />
     <ClInclude Include="stl_import.h" />
     <ClInclude Include="wavefront_obj.h" />
