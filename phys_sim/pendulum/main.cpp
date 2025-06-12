@@ -979,7 +979,7 @@ int main(int argc, char* argv[])
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 8);
 
     g_pwindow = SDL_CreateWindow("pendulum graphics",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 1024,
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1200, 750,
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!g_pwindow) {
         printf("SDL_CreateWindow() failed! Error: \"%s\"", SDL_GetError());
@@ -1061,7 +1061,7 @@ int main(int argc, char* argv[])
         process_movable_nodes();
         gl_font::begin_text(width, height);
         draw_debug_overlay(width, height);
-        g_LCD.debug_draw(glm::vec2(0.f, 200.f));
+        //g_LCD.debug_draw(glm::vec2(0.f, 200.f));
         gl_font::end_text();
         SDL_GL_SwapWindow(g_pwindow);
     }
