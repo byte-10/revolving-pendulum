@@ -68,17 +68,22 @@ class model_node
   bbox_t              m_bbox;
   model_node_material m_mat;
   uint32_t            m_texid;
+  bool m_visible;
+
 public:
   model_node(int parent, const char* pname,
     glm::vec3 pos, glm::vec3 rotation) :
     m_parent(parent), m_pname(pname),
-    m_pos(pos), m_rotation(rotation), m_num_childs(0), m_texid(0) {}
+    m_pos(pos), m_rotation(rotation), m_num_childs(0), m_texid(0), m_visible(true) {}
 
   inline bool is_root() const { return m_parent == -1; }
   inline int  get_parent_id() const { return m_parent; }
   inline const char* get_name() const { return m_pname; }
   inline glm::vec3& get_pos() { return m_pos; }
   inline glm::vec3& get_rotation() { return m_rotation; }
+  inline void set_visible(bool v) { m_visible = v; }
+  inline bool is_visible() const { return m_visible; }
+  
 
   inline int get_num_childs() const { return m_num_childs; }
   inline int get_child(int idx) const {
