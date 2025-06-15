@@ -73,6 +73,10 @@ public:
     GLuint get_texid() const { return m_display_texture; }
 
     void update(gl_font& ss_font, gl_font& text_font, float sim_time) {
+        char      buf[128];
+        glm::vec2 metrics;
+        glm::vec2 textpos;
+        glm::vec2 region_size(m_width, m_height);
         constexpr glm::vec4 BACKGROUND_PANEL_COLOR(0.1f, 0.1f, 0.1f, 1.f);
         constexpr glm::vec4 BORDER_COLOR(0.5f, 0.5f, 0.5f, 1.f);
 
@@ -86,9 +90,13 @@ public:
         glClear(GL_COLOR_BUFFER_BIT);
 
         ss_font.line_feed_mode(LF_X);
-        ss_font.move_to(10.f, 10.f);
         int time_sec = static_cast<int>(sim_time);
-        ss_font.draw_textf("%d:%.2d", time_sec / 60, time_sec % 60);
+        SDL_snprintf(buf, sizeof(buf), "%d:%.2d", time_sec / 60, time_sec % 60);
+        ss_font.line_boundsf(metrics.x, metrics.y, "%s", buf);
+        textpos.x = (region_size.x - metrics.x) / 2.f;
+        textpos.y = (region_size.y - metrics.y) / 2.f;
+        ss_font.move_to(textpos.x, textpos.y - metrics.y / 2.f);
+        ss_font.draw_text(buf);
 
         glBindTexture(GL_TEXTURE_2D, m_display_texture);
         glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, m_width, m_height, 0);
@@ -97,6 +105,7 @@ public:
         glViewport(old_viewport.x, old_viewport.y, old_viewport.z, old_viewport.w);
         glClearColor(old_clear.x, old_clear.y, old_clear.z, old_clear.w);
     }
+
 
     void debug_draw(glm::vec2 pos) {
         static const struct vert_s {
@@ -639,7 +648,7 @@ bool init_fonts()
     printf("init_fonts(): loading fonts...\n");
     bool status = true;
     status &= g_msg_font.load_ttf("Courier-Bold.ttf", 18.f);
-    status &= g_panel_font.load_ttf("sevensegment.ttf", 48.f);
+    status &= g_panel_font.load_ttf("sevensegment.ttf", 60.f);
     return status;
 }
 
