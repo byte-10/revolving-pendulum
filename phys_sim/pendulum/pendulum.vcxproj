@@ -131,6 +131,7 @@
     <ClCompile Include="builtin_model_gen.cpp" />
     <ClCompile Include="font.cpp" />
     <ClCompile Include="gl_debug.cpp" />
+    <ClCompile Include="help.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="simulation.cpp" />
     <ClCompile Include="stl_import.cpp" />
@@ -144,6 +145,7 @@
     <ClInclude Include="builtin_model_gen.h" />
     <ClInclude Include="font.h" />
     <ClInclude Include="gl_debug.h" />
+    <ClInclude Include="help.h" />
     <ClInclude Include="node.h" />
     <ClInclude Include="simulation.h" />
     <ClInclude Include="stb_truetype.h" />

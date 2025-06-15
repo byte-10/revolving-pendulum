@@ -17,6 +17,7 @@
 #include "banner.h"
 #include "font.h"
 #include "simulation.h"
+#include "help.h"
 
 #define arrsize(x) (sizeof(x) / sizeof(x[0]))
 
@@ -445,6 +446,11 @@ void handle_keys(const SDL_Keysym& key)
             return;
         }
         break;
+
+    case SDLK_F1:
+      show_help();
+      break;
+
     case SDLK_F2:
       g_debug_draw ^= DD_BOUNDS;
       printf("Debug bounds %d\n", !!((g_debug_draw & DD_BOUNDS) == DD_BOUNDS));
