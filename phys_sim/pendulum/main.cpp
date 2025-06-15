@@ -130,9 +130,11 @@ public:
     }
 };
 
+// animator.h
 class animator
 {
-  enum {
+public:
+  enum : uint32_t {
     AS_LIFT = 0,
     AS_SLIDE_RIGHT,
     AS_ROTATION,
@@ -142,25 +144,133 @@ class animator
     AS_COUNT = AS_IDLE
   };
 
+  animator(int pendulumNodeIndex=-1)
+    : m_state(AS_IDLE)
+    , m_pendulumID(pendulumNodeIndex)
+    , m_animStart(0.0f)
+    , m_animDuration(0.0f)
+    , m_progress(0.0f)
+  {
+    // задаём длительности фаз (в сек)
+    set_duration(AS_LIFT, 0.2f);
+    set_duration(AS_SLIDE_RIGHT, 0.2f);
+    set_duration(AS_ROTATION, 0.4f);
+    set_duration(AS_SLIDE_LEFT, 0.2f);
+    set_duration(AS_DROP, 0.2f);
+  }
+
+  // Запустить анимацию «переворота»
+  void start() {
+    if (m_state == AS_IDLE) {
+      transitionTo(AS_LIFT, 0.0f);
+    }
+  }
+
+  inline void set_pendulum_node_id(int id) {
+    m_pendulumID = id;
+  }
+
+  // Вызывать каждый кадр, до draw_recursive
+  void update(float now) {
+    assert(m_pendulumID != -1 && "m_pendulumID is not set!");
+    if (m_state == AS_IDLE)
+      return;
+
+    float t = now - m_animStart;
+    if (t >= m_animDuration) {
+      float overflow = t - m_animDuration;
+      if (m_state == AS_DROP) {
+        m_state = AS_IDLE;
+        m_progress = 0.0f;
+        return;
+      }
+      transitionTo(m_state + 1, overflow);
+      t = now - m_animStart;
+    }
+    m_progress = (m_animDuration > 0.0f ? t / m_animDuration : 1.0f);
+  }
+
+  // Главный метод: применяет все нужные glTranslatef/glRotatef
+  // для данного узла. После этого нужно сразу рисовать меш.
+  void applyTransforms(int nodeID, model_node& node) const {
+    // 1) обычный сдвиг относительно родителя
+    const glm::vec3& pos = node.get_pos();
+    glTranslatef(pos.x, pos.y, pos.z);
+
+    // 2) если это наш маятник и он анимируется → подъём/сдвиг
+    if (nodeID == m_pendulumID && m_state != AS_IDLE) {
+      glTranslatef(slide(), lift(), 0.0f);
+    }
+
+    // 3) поворот: основной угол из node + анимированный дополнительный
+    float baseZ = node.get_rotation().z;
+    float extra = (nodeID == m_pendulumID ? rotation() : 0.0f);
+    glRotatef(baseZ + extra, 0.0f, 0.0f, 1.0f);
+
+    // 4) «откат» подъёма/слайда, чтобы меш рисовался из своего barycenter
+    if (nodeID == m_pendulumID && m_state != AS_IDLE) {
+      glTranslatef(-slide(), -lift(), 0.0f);
+    }
+  }
+
+  bool isAnimating() const { return m_state != AS_IDLE; }
+
+private:
   uint32_t m_state;
-  float    m_anims_time[AS_COUNT];
+  int     m_pendulumID;   // индекс node3
+  float   m_animStart;
+  float   m_animDuration;
+  float   m_progress;
+  float   m_durations[AS_COUNT];
+
+  static constexpr float kLiftAmount = 2.0f;
+  static constexpr float kSlideAmount = 5.0f;
+  static constexpr float kRotateAmount = 180.0f;
+
+  void set_duration(uint32_t s, float d) {
+    if (s >= 0 && s < AS_COUNT) m_durations[s] = d;
+  }
+
+  void transitionTo(uint32_t s, float overflow) {
+    m_state = s;
+    m_animDuration = (s == AS_IDLE ? 0.0f : m_durations[s]);
+    m_animStart = getTime() - overflow;
+    m_progress = 0.0f;
+  }
+
+  static float getTime() {
+    Uint64 freq = SDL_GetPerformanceFrequency();
+    Uint64 cnt = SDL_GetPerformanceCounter();
+    return float(cnt) / float(freq);
+  }
 public:
-  inline void set_state_duration(uint32_t state, float duration) {
-    assert(state < AS_COUNT && "state out of bounds");
-    m_anims_time[state] = duration;
+  // вспомогательные для applyTransforms
+  float lift() const {
+    switch (m_state) {
+    case AS_LIFT:        return   kLiftAmount * m_progress;
+    case AS_SLIDE_RIGHT:
+    case AS_ROTATION:
+    case AS_SLIDE_LEFT:  return   kLiftAmount;
+    case AS_DROP:        return   kLiftAmount * (1.0f - m_progress);
+    default:             return 0.0f;
+    }
   }
-
-  animator() {
-    set_state_duration(AS_LIFT, 0.2f);
-    set_state_duration(AS_SLIDE_RIGHT, 0.2f);
-    set_state_duration(AS_ROTATION, 0.2f);
-    set_state_duration(AS_SLIDE_LEFT, 0.2f);
-    set_state_duration(AS_DROP, 0.2f);
+  float slide() const {
+    switch (m_state) {
+    case AS_SLIDE_RIGHT: return   kSlideAmount * m_progress;
+    case AS_ROTATION:    return   kSlideAmount;
+    case AS_SLIDE_LEFT:  return   kSlideAmount * (1.0f - m_progress);
+    default:             return 0.0f;
+    }
   }
-
-
-
-
+  float rotation() const {
+    switch (m_state) {
+    case AS_ROTATION:    return   kRotateAmount * m_progress;
+    case AS_SLIDE_LEFT:
+    case AS_DROP:        return   kRotateAmount;
+    default:             return 0.0f;
+    }
+  }
 };
 
 enum SIM_STATE : uint32_t {
@@ -174,43 +284,52 @@ enum DEBUG_DRAW {
   DD_BOUNDS = 1 << 0
 };
 
-SDL_Window* g_pwindow = nullptr;
-SDL_GLContext g_ctx = nullptr;
-obj_importer  g_obj;
-float         g_current_time;
-float         g_last_time;
-float         g_delta_time;
-float         g_FPS;
-float         g_frametime_begin;
-float         g_frametime;
-float         g_simtime_begin;
-float         g_simtime;
-float         g_simulation_time = 0.f;
-float         g_simulation_start_time = 0.f;
-float         g_deviation_deg;
-glm::ivec2    g_mouse;
-glm::ivec2    g_moused;
-glm::ivec4    g_viewport;
-glm::vec3     g_centers[arrsize(nodes_hierarchy)];
-GLUquadric* g_pquadratic = nullptr;
-gl_font       g_msg_font;
-gl_font       g_panel_font;
-pendulum_LCD  g_LCD(200, 100);
-int           g_node6_measure_idx;
-int           g_pendulum_node_idx;
-int           g_load0idx;
-int           g_load1idx;
-int           g_display_idx;
-SDL_Cursor* g_parrow_cursor = nullptr;
-SDL_Cursor* g_phand_cursor = nullptr;
-SDL_Cursor* g_pcurr_cursor = nullptr;
-bool          g_mouse_pressed = false;
-bool          g_node_selected = false;
-int           g_pendulum_reversed = 0;
+enum {
+  PIVOT_TOP=0,
+  PIVOT_BOTTOM,
+  PIVOTS_COUNT
+};
+
+SDL_Window*    g_pwindow = nullptr;
+SDL_GLContext  g_ctx = nullptr;
+obj_importer   g_obj;
+float          g_current_time;
+float          g_last_time;
+float          g_delta_time;
+float          g_FPS;
+float          g_frametime_begin;
+float          g_frametime;
+float          g_simtime_begin;
+float          g_simtime;
+float          g_simulation_time = 0.f;
+float          g_simulation_start_time = 0.f;
+float          g_deviation_deg;
+glm::ivec2     g_mouse;
+glm::ivec2     g_moused;
+glm::ivec4     g_viewport;
+glm::vec3      g_centers[arrsize(nodes_hierarchy)];
+GLUquadric*    g_pquadratic = nullptr;
+gl_font        g_msg_font;
+gl_font        g_panel_font;
+pendulum_LCD   g_LCD(200, 100);
+int            g_node6_measure_idx;
+int            g_pendulum_node_idx;
+int            g_load0idx;
+int            g_load1idx;
+int            g_display_idx;
+SDL_Cursor*    g_parrow_cursor = nullptr;
+SDL_Cursor*    g_phand_cursor = nullptr;
+SDL_Cursor*    g_pcurr_cursor = nullptr;
+bool           g_mouse_pressed = false;
+bool           g_node_selected = false;
+int            g_pendulum_reversed = 0;
 pendulum_physp g_pendulum_phys;
-SIM_STATE     g_sim_state = SIM_STATE_IDLE;
-int           g_debug_draw = DD_NONE;
-glm::vec3     g_pivot_offset;
+SIM_STATE      g_sim_state = SIM_STATE_IDLE;
+int            g_debug_draw = DD_NONE;
+glm::vec3      g_pivot_offset;
+animator       g_animator;
+bool           g_bis_reversed = false;
+bool           g_bwas_animating = false;
 
 template<int light_index>
 class gl_light
@@ -325,7 +444,7 @@ void change_coord_system(model_node* pnodes, int count, const obj_importer* pimp
   int parent = nodes_hierarchy[pi].get_parent_id();
   bbox_t& pb = nodes_hierarchy[parent].get_bbox();
   bbox_t& mb = nodes_hierarchy[pi].get_bbox();
-  // пересечение AABB
+
   glm::vec3 inter_min(glm::max(pb.vec_min, mb.vec_min));
   glm::vec3 inter_max(glm::min(pb.vec_max, mb.vec_max));
   glm::vec3 v_pivot(
@@ -333,7 +452,9 @@ void change_coord_system(model_node* pnodes, int count, const obj_importer* pimp
     inter_max.y,
     (inter_min.z + inter_max.z) * 0.5f
   );
-  g_pivot_offset = v_pivot - g_centers[pi]; // вектор от barycenter - реальная точка подвеса
+
+  // вектора от barycenter маятника до центров этих двух узлов
+  g_pivot_offset = v_pivot - g_centers[pi];
 
   // 3) Применяем позиционирование и сдвиг вершин
   for (int i = 0; i < count; i++) {
@@ -456,6 +577,14 @@ void handle_keys(const SDL_Keysym& key)
       printf("Debug bounds %d\n", !!((g_debug_draw & DD_BOUNDS) == DD_BOUNDS));
       break;
 
+    case SDLK_r:
+      if (!g_animator.isAnimating()) {
+        printf("Animation started\n");
+        g_bwas_animating = true;
+        g_animator.start();
+      }
+      break;
+
     default:
         break;
     }
@@ -570,20 +699,58 @@ void draw_recursive(int myid)
         return;
 
     glPushMatrix();
+
     model_node* pnode = &nodes_hierarchy[myid];
     const glm::vec3& pos = pnode->get_pos();
-    glTranslatef(pos.x, pos.y, pos.z);
+    const glm::vec3  angles = pnode->get_rotation();
 
-    const glm::vec3 angles = pnode->get_rotation();
-    if (myid == g_pendulum_node_idx)
-      glTranslatef(g_pivot_offset.x, g_pivot_offset.y, g_pivot_offset.z);
+    if (myid == g_pendulum_node_idx) {
+      // 1) смещаемся в позицию pendulum относительно parent
+      glTranslatef(pos.x, pos.y, pos.z);
 
-    glRotatef(angles.x, 1.f, 0.f, 0.f);
-    glRotatef(angles.y, 0.f, 1.f, 0.f);
-    glRotatef(angles.z, 0.f, 0.f, 1.f);
+      // 2) поднимаем–опускаем pivot (верхний или нижний) 
+      const glm::vec3& pivot = g_pivot_offset;
+      glTranslatef(pivot.x, pivot.y, pivot.z);
 
-    if (myid == g_pendulum_node_idx)
-      glTranslatef(-g_pivot_offset.x, -g_pivot_offset.y, -g_pivot_offset.z);
+      // 3) анимационный подъём/слайд
+      if (g_animator.isAnimating()) {
+        float lift = g_animator.lift();
+        float slide = g_animator.slide();
+        glTranslatef(slide, lift, 0.0f);
+      }
+
+      // 3) вращаем ВСЕГДА вокруг этой же точки: 
+      //    базовый угол из physics + anim-угол + 180° при flipped
+      float baseZ = angles.z;
+      float extra = g_animator.isAnimating() ? g_animator.rotation() : 0.0f;
+      float flip = g_bis_reversed ? 180.0f : 0.0f;
+      glRotatef(baseZ + extra + flip, 0.0f, 0.0f, 1.0f);
+
+      // 5) откатываем подъём/слайд
+      if (g_animator.isAnimating()) {
+        float lift = g_animator.lift();
+        float slide = g_animator.slide();
+        glTranslatef(-slide, -lift, 0.0f);
+      }
+
+      // 6) возвращаемся из pivot
+      glTranslatef(-pivot.x, -pivot.y, -pivot.z);
+
+      // 7) если перевёрнут — смещаем весь стержень вниз,
+      //    чтобы он снова свисал из точки подвеса
+      if (g_bis_reversed) {
+        // именно 2 * pivot.y, потому что после flip
+        // центр модели поднялся ровно на pivot.y
+        glTranslatef(0.0f, 2.0f * g_pivot_offset.y, 0.0f);
+      }
+    }
+    else {
+      // остальная иерархия рендерится без этих спец-смещений
+      glTranslatef(pos.x, pos.y, pos.z);
+      glRotatef(angles.x, 1, 0, 0);
+      glRotatef(angles.y, 0, 1, 0);
+      glRotatef(angles.z, 0, 0, 1);
+    }
 
     obj_importer::mesh* pmesh = g_obj.get_mesh(myid);
 
@@ -756,19 +923,25 @@ bool init_fonts()
 
 void update_time()
 {
-    g_current_time = get_time();
-    g_delta_time = g_current_time - g_last_time;
-    g_last_time = g_current_time;
+  g_current_time = get_time();
+  g_delta_time = g_current_time - g_last_time;
+  g_last_time = g_current_time;
 
-    constexpr float delta_time_min_threshold = 0.00001f;
-    if (g_delta_time < delta_time_min_threshold)
-        g_delta_time = delta_time_min_threshold;
+  constexpr float delta_time_min_threshold = 0.00001f;
+  if (g_delta_time < delta_time_min_threshold)
+      g_delta_time = delta_time_min_threshold;
 
-    g_FPS = 1.f / g_delta_time;
+  g_FPS = 1.f / g_delta_time;
 
-    if (g_sim_state == SIM_STATE_SUMULATING) {
-        g_simulation_time = g_current_time - g_simulation_start_time;
-    }
+  if (g_sim_state == SIM_STATE_SUMULATING) {
+      g_simulation_time = g_current_time - g_simulation_start_time;
+  }
+
+  g_animator.update(g_current_time);
+  if (g_bwas_animating && !g_animator.isAnimating()) {
+    g_bis_reversed = !g_bis_reversed;
+  }
+  g_bwas_animating = g_animator.isAnimating();
 }
 
 struct DiskDistances {
@@ -972,6 +1145,7 @@ bool init_node_indices_and_cursors()
   g_node6_measure_idx = get_node_index("node6");
   g_parrow_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
   g_phand_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+  g_animator.set_pendulum_node_id(g_pendulum_node_idx);
   if (!(g_parrow_cursor && g_phand_cursor)) {
     printf("init_movable_nodes(): cursors initializing failed!");
     return false;
