@@ -129,10 +129,48 @@ public:
     }
 };
 
+class animator
+{
+  enum {
+    AS_LIFT = 0,
+    AS_SLIDE_RIGHT,
+    AS_ROTATION,
+    AS_SLIDE_LEFT,
+    AS_DROP,
+    AS_IDLE,
+    AS_COUNT = AS_IDLE
+  };
+
+  uint32_t m_state;
+  float    m_anims_time[AS_COUNT];
+public:
+  inline void set_state_duration(uint32_t state, float duration) {
+    assert(state < AS_COUNT && "state out of bounds");
+    m_anims_time[state] = duration;
+  }
+
+  animator() {
+    set_state_duration(AS_LIFT, 0.2f);
+    set_state_duration(AS_SLIDE_RIGHT, 0.2f);
+    set_state_duration(AS_ROTATION, 0.2f);
+    set_state_duration(AS_SLIDE_LEFT, 0.2f);
+    set_state_duration(AS_DROP, 0.2f);
+  }
+
+
+
+
+};
+
 enum SIM_STATE : uint32_t {
     SIM_STATE_IDLE = 0,
     SIM_STATE_SUMULATING,
     SIM_STATE_STOPPED
+};
+
+enum DEBUG_DRAW {
+  DD_NONE = 0,
+  DD_BOUNDS = 1 << 0
 };
 
 SDL_Window* g_pwindow = nullptr;
@@ -157,6 +195,7 @@ GLUquadric* g_pquadratic = nullptr;
 gl_font       g_msg_font;
 gl_font       g_panel_font;
 pendulum_LCD  g_LCD(200, 100);
+int           g_node6_measure_idx;
 int           g_pendulum_node_idx;
 int           g_load0idx;
 int           g_load1idx;
@@ -169,6 +208,8 @@ bool          g_node_selected = false;
 int           g_pendulum_reversed = 0;
 pendulum_physp g_pendulum_phys;
 SIM_STATE     g_sim_state = SIM_STATE_IDLE;
+int           g_debug_draw = DD_NONE;
+glm::vec3     g_pivot_offset;
 
 template<int light_index>
 class gl_light
@@ -273,50 +314,44 @@ void print_nodes_barycenter(const obj_importer* pimp)
 
 void change_coord_system(model_node* pnodes, int count, const obj_importer* pimp)
 {
-    for (int i = 0; i < count; i++) {
-        model_node* pnode = &pnodes[i];
-        obj_importer::mesh* pmesh = pimp->get_mesh(i);
-        g_centers[i] = barycenter(pnode->get_bbox(), pmesh->get_verts(), pmesh->get_num_verts());
-    }
+  // 1) Считаем barycenter всех узлов до трансформаций
+  for (int i = 0; i < count; i++) {
+    obj_importer::mesh* pmesh = pimp->get_mesh(i);
+    g_centers[i] = barycenter(pnodes[i].get_bbox(), pmesh->get_verts(), pmesh->get_num_verts());
+  }
 
-    for (int i = 0; i < count; i++) {
-        model_node* pnode = &pnodes[i];
-        obj_importer::mesh* pmesh = pimp->get_mesh(i);
-        int parent_id = pnode->get_parent_id();
-        model_node* pparent = (parent_id >= 0 ? &pnodes[parent_id] : nullptr);
-        if (strcmp(pnode->get_name(), "node3") == 0 && pparent) {
-            glm::vec3 parent_min = pparent->get_bbox().vec_min;
-            glm::vec3 parent_max = pparent->get_bbox().vec_max;
-            glm::vec3 pend_min = pnode->get_bbox().vec_min;
-            glm::vec3 pend_max = pnode->get_bbox().vec_max;
-            glm::vec3 inter_min(
-                glm::max(parent_min.x, pend_min.x),
-                glm::max(parent_min.y, pend_min.y),
-                glm::max(parent_min.z, pend_min.z)
-            );
+  int pi = get_node_index("node3");
+  int parent = nodes_hierarchy[pi].get_parent_id();
+  bbox_t& pb = nodes_hierarchy[parent].get_bbox();
+  bbox_t& mb = nodes_hierarchy[pi].get_bbox();
+  // пересечение AABB
+  glm::vec3 inter_min(glm::max(pb.vec_min, mb.vec_min));
+  glm::vec3 inter_max(glm::min(pb.vec_max, mb.vec_max));
+  glm::vec3 v_pivot(
+    (inter_min.x + inter_max.x) * 0.5f,
+    inter_max.y,
+    (inter_min.z + inter_max.z) * 0.5f
+  );
+  g_pivot_offset = v_pivot - g_centers[pi]; // вектор от barycenter - реальная точка подвеса
 
-            glm::vec3 inter_max(
-                glm::min(parent_max.x, pend_max.x),
-                glm::min(parent_max.y, pend_max.y),
-                glm::min(parent_max.z, pend_max.z)
-            );
-
-            if (inter_min.x <= inter_max.x && inter_min.y <= inter_max.y && inter_min.z <= inter_max.z) {
-                g_centers[i] = glm::vec3(
-                    (inter_min.x + inter_max.x) * 0.5f,
-                    inter_max.y,
-                    (inter_min.z + inter_max.z) * 0.5f
-                );
-            }
-            else {
-                printf("Warning: %s bbox not intersects with %s!!!\n", pnode->get_name(), pparent->get_name());
-                __debugbreak();
-            }
-        }
-
-        pnode->set_position(pparent ? (g_centers[i] - g_centers[parent_id]) : glm::vec3(0.f, 0.f, 0.f));
-        transform_verts(pmesh->get_verts(), pmesh->get_num_verts(), glm::translate(glm::mat4x4(1.f), -g_centers[i]));
-    }
+  // 3) Применяем позиционирование и сдвиг вершин
+  for (int i = 0; i < count; i++) {
+    model_node* pnode = &pnodes[i];
+    obj_importer::mesh* pmesh = pimp->get_mesh(i);
+    int pid = pnode->get_parent_id();
+    glm::vec3 delta = (pid >= 0) ? (g_centers[i] - g_centers[pid]) : glm::vec3(0.0f);
+    pnode->set_position(delta);
+    // Сдвигаем вершины так, чтобы pivot (g_centers[i]) оказался в локальном (0,0,0)
+    transform_verts(
+      pmesh->get_verts(),
+      pmesh->get_num_verts(),
+      glm::translate(glm::mat4(1.0f), -g_centers[i])
+    );
+    // Пересчитаем bbox под новые вершины
+    bbox_t newbb;
+    barycenter(newbb, pmesh->get_verts(), pmesh->get_num_verts());
+    pnode->get_bbox() = newbb;
+  }
 }
 
 float get_time()
@@ -410,6 +445,10 @@ void handle_keys(const SDL_Keysym& key)
             return;
         }
         break;
+    case SDLK_F2:
+      g_debug_draw ^= DD_BOUNDS;
+      printf("Debug bounds %d\n", !!((g_debug_draw & DD_BOUNDS) == DD_BOUNDS));
+      break;
 
     default:
         break;
@@ -471,20 +510,74 @@ bool handle_events()
     return b_active;
 }
 
+void draw_bbox(const bbox_t& src, glm::vec3 color)
+{
+  bool light_enabled = glIsEnabled(GL_LIGHTING);
+  if (light_enabled)
+    glDisable(GL_LIGHTING);
+
+  glPushAttrib(GL_CURRENT_BIT);
+  glColor3fv(glm::value_ptr(color));
+
+  const glm::vec3& vmin = src.vec_min;
+  const glm::vec3& vmax = src.vec_max;
+
+  // 8 вершин коробки
+  glm::vec3 c[8] = {
+    {vmin.x, vmin.y, vmin.z},
+    {vmax.x, vmin.y, vmin.z},
+    {vmax.x, vmax.y, vmin.z},
+    {vmin.x, vmax.y, vmin.z},
+    {vmin.x, vmin.y, vmax.z},
+    {vmax.x, vmin.y, vmax.z},
+    {vmax.x, vmax.y, vmax.z},
+    {vmin.x, vmax.y, vmax.z},
+  };
+
+  // рёбра (каждое ребро — пара индексов в массиве c)
+  static const int edges[12][2] = {
+    {0,1}, {1,2}, {2,3}, {3,0}, // нижнее основание
+    {4,5}, {5,6}, {6,7}, {7,4}, // верхнее основание
+    {0,4}, {1,5}, {2,6}, {3,7}  // вертикальные рёбра
+  };
+
+  glBegin(GL_LINES);
+  for (int i = 0; i < 12; ++i) {
+    const glm::vec3& a = c[edges[i][0]];
+    const glm::vec3& b = c[edges[i][1]];
+    glVertex3f(a.x, a.y, a.z);
+    glVertex3f(b.x, b.y, b.z);
+  }
+  glEnd();
+
+  glPopAttrib();
+  if (light_enabled)
+    glEnable(GL_LIGHTING);
+}
+
 void draw_recursive(int myid)
 {
     GLenum error;
     if (myid == -1)
+        return;
+    if (myid == g_node6_measure_idx)
         return;
 
     glPushMatrix();
     model_node* pnode = &nodes_hierarchy[myid];
     const glm::vec3& pos = pnode->get_pos();
     glTranslatef(pos.x, pos.y, pos.z);
+
     const glm::vec3 angles = pnode->get_rotation();
+    if (myid == g_pendulum_node_idx)
+      glTranslatef(g_pivot_offset.x, g_pivot_offset.y, g_pivot_offset.z);
+
     glRotatef(angles.x, 1.f, 0.f, 0.f);
     glRotatef(angles.y, 0.f, 1.f, 0.f);
     glRotatef(angles.z, 0.f, 0.f, 1.f);
+
+    if (myid == g_pendulum_node_idx)
+      glTranslatef(-g_pivot_offset.x, -g_pivot_offset.y, -g_pivot_offset.z);
 
     obj_importer::mesh* pmesh = g_obj.get_mesh(myid);
 
@@ -493,6 +586,9 @@ void draw_recursive(int myid)
     glMaterialfv(GL_FRONT, GL_DIFFUSE, glm::value_ptr(mat.get_diffuse()));
     glMaterialfv(GL_FRONT, GL_SPECULAR, glm::value_ptr(mat.get_specular()));
     glMaterialf(GL_FRONT, GL_SHININESS, mat.get_shininess());
+
+    if (g_debug_draw & DD_BOUNDS)
+      draw_bbox(pnode->get_bbox(), { 0.f, 1.f, 0.f });
 
     glStencilFunc(GL_ALWAYS, myid, 0xFF);
 
@@ -711,7 +807,7 @@ void draw_deviation_angle()
         glDisable(GL_LIGHTING);
 
     glPushMatrix();
-    glm::vec3 pivot = g_centers[g_pendulum_node_idx];
+    glm::vec3 pivot = g_centers[g_pendulum_node_idx] + g_pivot_offset;
     glTranslatef(pivot.x, pivot.y, pivot.z);
 
     // Draw vertical reference line (red)
@@ -862,31 +958,33 @@ void draw_pendulum()
 
 bool init_node_indices_and_cursors()
 {
-    printf("init_movable_nodes(): finding movable nodes...\n");
-    g_pendulum_node_idx = get_node_index("node3");
-    g_load0idx = get_node_index("node4");
-    g_load1idx = get_node_index("node5");
-    g_display_idx = get_node_index("node9_display");
-    g_parrow_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
-    g_phand_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
-    if (!(g_parrow_cursor && g_phand_cursor)) {
-        printf("init_movable_nodes(): cursors initializing failed!");
-        return false;
-    }
+  printf("init_movable_nodes(): finding movable nodes...\n");
+  g_pendulum_node_idx = get_node_index("node3");
+  g_load0idx = get_node_index("node4");
+  g_load1idx = get_node_index("node5");
+  g_display_idx = get_node_index("node9_display");
+  g_node6_measure_idx = get_node_index("node6");
+  g_parrow_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+  g_phand_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+  if (!(g_parrow_cursor && g_phand_cursor)) {
+    printf("init_movable_nodes(): cursors initializing failed!");
+    return false;
+  }
 
-    return g_pendulum_node_idx != -1 &&
-        g_load0idx != -1 &&
-        g_display_idx != -1 &&
-        g_load1idx != -1;
+  return g_pendulum_node_idx != -1 &&
+    g_load0idx != -1 &&
+    g_display_idx != -1 &&
+    g_node6_measure_idx != -1 &&
+    g_load1idx != -1;
 }
 
 void set_cursor(SDL_Cursor* pcur)
 {
-    if (g_pcurr_cursor != pcur) {
-        g_pcurr_cursor = pcur;
-        SDL_SetCursor(g_pcurr_cursor);
-        SDL_SetCursor(nullptr);
-    }
+  if (g_pcurr_cursor != pcur) {
+    g_pcurr_cursor = pcur;
+    SDL_SetCursor(g_pcurr_cursor);
+    SDL_SetCursor(nullptr);
+  }
 }
 
 constexpr float LOAD0_MIN_REL_Y = -10.0f;
@@ -1066,21 +1164,22 @@ GLuint create_text_texture(const text_texture& srcinfo, gl_font& font, const cha
 
 void sort_meshes()
 {
-    auto& meshes = g_obj.get_meshes();
-    std::sort(meshes.begin(), meshes.end(),
-        [](obj_importer::mesh* a, obj_importer::mesh* b) {
-            const char* nameA = a->get_name();
-            const char* nameB = b->get_name();
-            auto itA = std::find_if(std::begin(nodes_hierarchy), std::end(nodes_hierarchy),
-                [&](const model_node& n) { return std::strcmp(n.get_name(), nameA) == 0; });
-            auto itB = std::find_if(std::begin(nodes_hierarchy), std::end(nodes_hierarchy),
-                [&](const model_node& n) { return std::strcmp(n.get_name(), nameB) == 0; });
-            size_t idxA = (itA != std::end(nodes_hierarchy)) ? std::distance(std::begin(nodes_hierarchy), itA) : SIZE_MAX;
-            size_t idxB = (itB != std::end(nodes_hierarchy)) ? std::distance(std::begin(nodes_hierarchy), itB) : SIZE_MAX;
-            if (idxA != idxB)
-                return idxA < idxB;
-            return std::strcmp(nameA, nameB) < 0;
-        });
+  auto& meshes = g_obj.get_meshes();
+  std::sort(meshes.begin(), meshes.end(),
+    [](obj_importer::mesh* a, obj_importer::mesh* b) {
+      const char* nameA = a->get_name();
+      const char* nameB = b->get_name();
+      auto itA = std::find_if(std::begin(nodes_hierarchy), std::end(nodes_hierarchy),
+          [&](const model_node& n) { return std::strcmp(n.get_name(), nameA) == 0; });
+      auto itB = std::find_if(std::begin(nodes_hierarchy), std::end(nodes_hierarchy),
+          [&](const model_node& n) { return std::strcmp(n.get_name(), nameB) == 0; });
+      size_t idxA = (itA != std::end(nodes_hierarchy)) ? std::distance(std::begin(nodes_hierarchy), itA) : SIZE_MAX;
+      size_t idxB = (itB != std::end(nodes_hierarchy)) ? std::distance(std::begin(nodes_hierarchy), itB) : SIZE_MAX;
+      if (idxA != idxB)
+          return idxA < idxB;
+      return std::strcmp(nameA, nameB) < 0;
+    }
+  );
 }
 
 void init_textures()
