@@ -7,6 +7,7 @@
 
 #include <vector>
 #include <string>
+//#include <unordered_map>
 #include <algorithm>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -32,9 +33,9 @@ model_node nodes_hierarchy[] = {
   model_node(3,  "node7", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(3,  "node8", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(1,  "node9_display", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(1,  "button1", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(1,  "button2", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
-  model_node(1,  "button3", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(1,  "node10_button1", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(1,  "node11_button2", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
+  model_node(1,  "node12_button3", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f }),
   model_node(1,  "node13_text", { 0.f, 0.f, 0.f }, { 0.f, 0.f, 0.f })
 };
 
@@ -1415,19 +1416,14 @@ GLuint create_text_texture(const text_texture& srcinfo, gl_font& font, const cha
 void sort_meshes()
 {
   auto& meshes = g_obj.get_meshes();
-  std::sort(meshes.begin(), meshes.end(),
-    [](obj_importer::mesh* a, obj_importer::mesh* b) {
-      const char* nameA = a->get_name();
-      const char* nameB = b->get_name();
-      auto itA = std::find_if(std::begin(nodes_hierarchy), std::end(nodes_hierarchy),
-          [&](const model_node& n) { return std::strcmp(n.get_name(), nameA) == 0; });
-      auto itB = std::find_if(std::begin(nodes_hierarchy), std::end(nodes_hierarchy),
-          [&](const model_node& n) { return std::strcmp(n.get_name(), nameB) == 0; });
-      size_t idxA = (itA != std::end(nodes_hierarchy)) ? std::distance(std::begin(nodes_hierarchy), itA) : SIZE_MAX;
-      size_t idxB = (itB != std::end(nodes_hierarchy)) ? std::distance(std::begin(nodes_hierarchy), itB) : SIZE_MAX;
-      if (idxA != idxB)
-          return idxA < idxB;
-      return std::strcmp(nameA, nameB) < 0;
+  assert(meshes.size() == arrsize(nodes_hierarchy) && "Model mesh has no exists in hierarchy!");
+  std::stable_sort(meshes.begin(), meshes.end(),
+    [&](obj_importer::mesh* a, obj_importer::mesh* b) {
+      int idxA = get_node_index(a->get_name());
+      int idxB = get_node_index(b->get_name());
+      assert(idxA != -1 && "node A not found!");
+      assert(idxB != -1 && "node B not found!");
+      return idxA < idxB;
     }
   );
 }
@@ -1444,20 +1440,60 @@ void init_textures()
     assert(g_LCD.get_texid() && "g_LCD texture not initialized!");
     pLCD->set_texid(g_LCD.get_texid());
 
-    model_node* pbtn1 = find_node("button1");
+    model_node* pbtn1 = find_node("node10_button1");
     texid = create_text_texture(text_tex, g_msg_font, "Start");
     assert(texid != 0 && "failed to create texture");
     pbtn1->set_texid(texid);
 
-    model_node* pbtn2 = find_node("button2");
+    model_node* pbtn2 = find_node("node11_button2");
     texid = create_text_texture(text_tex, g_msg_font, "Stop");
     assert(texid != 0 && "failed to create texture");
     pbtn2->set_texid(texid);
 
-    model_node* pbtn3 = find_node("button3");
+    model_node* pbtn3 = find_node("node12_button3");
     texid = create_text_texture(text_tex, g_msg_font, "Reset");
     assert(texid != 0 && "failed to create texture");
     pbtn3->set_texid(texid);
+}
+
+void print_meshes()
+{
+  printf("\n\n------ print meshes ------\n");
+  auto meshes = g_obj.get_meshes();
+  for (size_t i = 0; i < meshes.size(); i++) {
+    obj_importer::mesh* pmesh = meshes[i];
+    printf("order: %zd  |  name: %s\n", i, pmesh->get_name());
+  }
+  printf("\n\n");
+}
+
+void print_hierarchy()
+{
+  printf("------- print_hierarchy ---------\n");
+  for (size_t i = 0; i < arrsize(nodes_hierarchy); i++) {
+    model_node* pnode = &nodes_hierarchy[i];
+    printf(" order: %zd  | %s\n", i, pnode->get_name());
+  }
+  printf("\n");
+}
+
+bool validate_nodes()
+{
+  printf("validate_nodes(): performing nodes validation...\n");
+  if (arrsize(nodes_hierarchy) != g_obj.get_num_meshes()) {
+    printf("ERROR! count meshes from model not equals hierarchy!\n");
+    return false;
+  }
+
+  for (size_t i = 0; i < g_obj.get_num_meshes(); i++) {
+    obj_importer::mesh* pmesh = g_obj.get_mesh(i);
+    if (get_node_index(pmesh->get_name()) == -1) {
+      printf("ERROR! index(%zd) Node with name from model \"%s\" not found in hierarchy!\n",
+        i, pmesh->get_name());
+      return false;
+    }
+  }
+  return true;
 }
 
 int main(int argc, char* argv[])
@@ -1477,8 +1513,20 @@ int main(int argc, char* argv[])
         SDL_Quit();
         return 1;
     }
-    sort_meshes();
     printf("model loaded!\n");
+
+    /* validate nodes */
+    if (!validate_nodes()) {
+      printf("validate_nodes(): validation failed!\n");
+      SDL_GL_DeleteContext(g_ctx);
+      SDL_DestroyWindow(g_pwindow);
+      SDL_Quit();
+      return 1;
+    }
+    print_meshes();
+    print_hierarchy();
+    sort_meshes();
+    print_meshes();
 
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
