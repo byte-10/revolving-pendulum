@@ -318,9 +318,9 @@ int            g_pendulum_node_idx;
 int            g_load0idx;
 int            g_load1idx;
 int            g_display_idx;
-int            g_button1_idx;
-int            g_button2_idx;
-int            g_button3_idx;
+int            g_button_start_idx;
+int            g_button_stop_idx;
+int            g_button_reset_idx;
 SDL_Cursor*    g_ppointer_cursor = nullptr;
 SDL_Cursor*    g_parrow_cursor = nullptr;
 SDL_Cursor*    g_phand_cursor = nullptr;
@@ -1148,9 +1148,9 @@ bool init_node_indices_and_cursors()
     g_load1idx = get_node_index("node5");
     g_display_idx = get_node_index("node9_display");
     g_node6_measure_idx = get_node_index("node6");
-    g_button1_idx = get_node_index("button1");
-    g_button2_idx = get_node_index("button2");
-    g_button3_idx = get_node_index("button3");
+    g_button_start_idx = get_node_index("node12_button3");
+    g_button_stop_idx = get_node_index("node11_button2");
+    g_button_reset_idx = get_node_index("node10_button1");
 
     g_parrow_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
     g_phand_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
@@ -1168,9 +1168,9 @@ bool init_node_indices_and_cursors()
         g_display_idx != -1 &&
         g_node6_measure_idx != -1 &&
         g_load1idx != -1 &&
-        g_button1_idx != -1 &&
-        g_button2_idx != -1 &&
-        g_button3_idx != -1;
+        g_button_start_idx != -1 &&
+        g_button_stop_idx != -1 &&
+        g_button_reset_idx != -1;
 }
 
 void set_cursor(SDL_Cursor* pcur)
@@ -1204,9 +1204,11 @@ void update_hover_cursor()
     if (id == g_pendulum_node_idx ||
         id == g_load0idx ||
         id == g_load1idx ||
-        id == g_button1_idx ||
-        id == g_button2_idx ||
-        id == g_button3_idx) {
+        id == g_button_start_idx ||
+        id == g_button_stop_idx ||
+        id == g_button_reset_idx) {
+      printf("g_button_start_idx=%d  g_button_stop_idx=%d  g_button_reset_idx=%d  id=%d\n",
+        g_button_start_idx, g_button_stop_idx, g_button_reset_idx, id);
         set_cursor(g_ppointer_cursor);
     }
     else {
@@ -1232,7 +1234,7 @@ void process_movable_nodes()
         int id = get_id_from_coord(world_pos, g_viewport, g_mouse);
 
         // Обработка кликов по всей области кнопок
-        if (id == g_button1_idx) {
+        if (id == g_button_start_idx) {
             // Кнопка "Start" - работает при клике в любом месте текстуры
             if (g_sim_state == SIM_STATE_IDLE) {
                 nodes_hierarchy[g_pendulum_node_idx].set_rotation({ 0.f, 0.f, g_deviation_deg });
@@ -1244,7 +1246,7 @@ void process_movable_nodes()
             }
             return;
         }
-        else if (id == g_button2_idx) {
+        else if (id == g_button_stop_idx) {
             // Кнопка "Stop"
             if (g_sim_state == SIM_STATE_SUMULATING) {
                 printf("Stop button pressed\n");
@@ -1252,7 +1254,7 @@ void process_movable_nodes()
             }
             return;
         }
-        else if (id == g_button3_idx) {
+        else if (id == g_button_reset_idx) {
             // Кнопка "Reset"
             printf("Reset button pressed\n");
             g_sim_state = SIM_STATE_IDLE;
