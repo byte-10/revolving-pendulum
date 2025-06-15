@@ -8,9 +8,9 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#include <glm/glm.hpp> //glm::vec3, glm::vec2
-#include <glm/gtc/matrix_transform.hpp> //glm::translate, glm::rotate, glm::scale and more..
-#include <glm/gtc/type_ptr.hpp> //glm::value
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include "gl_debug.h"
 #include "wavefront_obj.h"
 #include "node.h"
@@ -361,9 +361,7 @@ bool get_coord_from_depth(glm::vec3& dst, glm::ivec4 viewport, glm::ivec2 coord)
 int get_id_from_coord(glm::vec3& world_pos, glm::ivec4 viewport, glm::ivec2 coord)
 {
     GLubyte stencil_value;
-#if 1
     coord.y = (viewport.w - 1) - coord.y;
-#endif
     if (get_coord_from_depth(world_pos, viewport, coord)) {
         glReadPixels(coord.x, coord.y, 1, 1, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, &stencil_value);
         return static_cast<int>(stencil_value);
@@ -378,7 +376,6 @@ void handle_keys(const SDL_Keysym& key)
     {
     case SDLK_RETURN:
         if (g_sim_state != SIM_STATE_SUMULATING) {
-            // Use g_deviation_deg set by mouse dragging
             nodes_hierarchy[g_pendulum_node_idx].set_rotation({ 0.f, 0.f, g_deviation_deg });
             printf("state changed to SIM_STATE_SUMULATING with deviation %.2f deg\n", g_deviation_deg);
             pendulum_phys_init_default(g_pendulum_phys, g_deviation_deg);
@@ -663,8 +660,157 @@ void update_time()
     }
 }
 
+struct DiskDistances {
+    float center_distance;
+    float end_distance;
+};
+
+DiskDistances calculate_disks_distance()
+{
+    glm::vec3 pos_load0 = nodes_hierarchy[g_load0idx].get_pos() + g_centers[g_load0idx];
+    glm::vec3 pos_load1 = nodes_hierarchy[g_load1idx].get_pos() + g_centers[g_load1idx];
+
+    // Get bounding boxes to find disk ends (assuming y-axis is the vertical axis)
+    bbox_t bbox_load0 = nodes_hierarchy[g_load0idx].get_bbox();
+    bbox_t bbox_load1 = nodes_hierarchy[g_load1idx].get_bbox();
+
+    // Transform bbox min/max to world coordinates
+    glm::vec3 load0_min = pos_load0 + bbox_load0.vec_min;
+    glm::vec3 load0_max = pos_load0 + bbox_load0.vec_max;
+    glm::vec3 load1_min = pos_load1 + bbox_load1.vec_min;
+    glm::vec3 load1_max = pos_load1 + bbox_load1.vec_max;
+
+    // Assuming disks are aligned along y-axis, use bottom ends (min y)
+    glm::vec3 load0_end = glm::vec3(pos_load0.x, load0_min.y, pos_load0.z);
+    glm::vec3 load1_end = glm::vec3(pos_load1.x, load1_min.y, pos_load1.z);
+
+    DiskDistances distances;
+    distances.center_distance = glm::distance(pos_load0, pos_load1);
+    distances.end_distance = glm::distance(load0_end, load1_end);
+    return distances;
+}
+
+float calculate_deviation_angle()
+{
+    return nodes_hierarchy[g_pendulum_node_idx].get_rotation().z;
+}
+
+void draw_deviation_angle()
+{
+    GLboolean lighting_enabled = glIsEnabled(GL_LIGHTING);
+    if (lighting_enabled)
+        glDisable(GL_LIGHTING);
+
+    glPushMatrix();
+    glm::vec3 pivot = g_centers[g_pendulum_node_idx];
+    glTranslatef(pivot.x, pivot.y, pivot.z);
+
+    // Draw vertical reference line (red)
+    glColor3f(1.0f, 0.0f, 0.0f);
+    glBegin(GL_LINES);
+    glVertex3f(0.0f, 0.0f, 0.0f);
+    glVertex3f(0.0f, -5.0f, 0.0f);
+    glEnd();
+
+    // Draw pendulum line (blue)
+    float angle_deg = calculate_deviation_angle();
+    float angle_rad = glm::radians(angle_deg);
+    float len = 5.0f;
+    glColor3f(0.0f, 0.0f, 1.0f);
+    glBegin(GL_LINES);
+    glVertex3f(0.0f, 0.0f, 0.0f);
+    glVertex3f(len * sinf(angle_rad), -len * cosf(angle_rad), 0.0f);
+    glEnd();
+
+    // Draw angle arc (green)
+    glColor3f(0.0f, 1.0f, 0.0f);
+    glBegin(GL_LINE_STRIP);
+    const int segments = 20;
+    float radius = 2.0f;
+    float start_angle = 0.0f;
+    float end_angle = angle_rad;
+    if (angle_deg < 0.0f) {
+        start_angle = angle_rad;
+        end_angle = 0.0f;
+    }
+    for (int i = 0; i <= segments; ++i) {
+        float theta = start_angle + (end_angle - start_angle) * (float)i / segments;
+        glVertex3f(radius * sinf(theta), -radius * cosf(theta), 0.0f);
+    }
+    glEnd();
+
+    // Draw angle value near the arc
+    gl_font::begin_text(g_viewport.z, g_viewport.w);
+    g_msg_font.set_color(255, 255, 255, 255);
+    float text_x = pivot.x + radius * 1.2f * sinf(angle_rad * 0.5f);
+    float text_y = pivot.y - radius * 1.2f * cosf(angle_rad * 0.5f);
+    g_msg_font.move_to(text_x * 10.0f + g_viewport.z * 0.5f, -text_y * 10.0f + g_viewport.w * 0.5f); // Scale to screen coords
+    g_msg_font.draw_textf("%.2f deg", fabs(angle_deg));
+    gl_font::end_text();
+
+    glPopMatrix();
+
+    if (lighting_enabled)
+        glEnable(GL_LIGHTING);
+}
+
+void draw_disks_distances()
+{
+    GLboolean lighting_enabled = glIsEnabled(GL_LIGHTING);
+    if (lighting_enabled)
+        glDisable(GL_LIGHTING);
+
+    glm::vec3 pos_load0 = nodes_hierarchy[g_load0idx].get_pos() + g_centers[g_load0idx];
+    glm::vec3 pos_load1 = nodes_hierarchy[g_load1idx].get_pos() + g_centers[g_load1idx];
+
+    bbox_t bbox_load0 = nodes_hierarchy[g_load0idx].get_bbox();
+    bbox_t bbox_load1 = nodes_hierarchy[g_load1idx].get_bbox();
+
+    glm::vec3 load0_min = pos_load0 + bbox_load0.vec_min;
+    glm::vec3 load1_min = pos_load1 + bbox_load1.vec_min;
+
+    glm::vec3 load0_end = glm::vec3(pos_load0.x, load0_min.y, pos_load0.z);
+    glm::vec3 load1_end = glm::vec3(pos_load1.x, load1_min.y, pos_load1.z);
+
+    DiskDistances distances = calculate_disks_distance();
+
+    // Draw line between centers (yellow)
+    glColor3f(1.0f, 1.0f, 0.0f);
+    glBegin(GL_LINES);
+    glVertex3fv(glm::value_ptr(pos_load0));
+    glVertex3fv(glm::value_ptr(pos_load1));
+    glEnd();
+
+    // Draw center distance text
+    glm::vec3 mid_center = (pos_load0 + pos_load1) * 0.5f;
+    gl_font::begin_text(g_viewport.z, g_viewport.w);
+    g_msg_font.set_color(255, 255, 255, 255);
+    g_msg_font.move_to(mid_center.x * 10.0f + g_viewport.z * 0.5f, -mid_center.y * 10.0f + g_viewport.w * 0.5f);
+    g_msg_font.draw_textf("%.2f units", distances.center_distance);
+    gl_font::end_text();
+
+    // Draw line between ends (cyan)
+    glColor3f(0.0f, 1.0f, 1.0f);
+    glBegin(GL_LINES);
+    glVertex3fv(glm::value_ptr(load0_end));
+    glVertex3fv(glm::value_ptr(load1_end));
+    glEnd();
+
+    // Draw end distance text
+    glm::vec3 mid_end = (load0_end + load1_end) * 0.5f;
+    gl_font::begin_text(g_viewport.z, g_viewport.w);
+    g_msg_font.set_color(255, 255, 255, 255);
+    g_msg_font.move_to(mid_end.x * 10.0f + g_viewport.z * 0.5f, -mid_end.y * 10.0f + g_viewport.w * 0.5f);
+    g_msg_font.draw_textf("%.2f units", distances.end_distance);
+    gl_font::end_text();
+
+    if (lighting_enabled)
+        glEnable(GL_LIGHTING);
+}
+
 void draw_debug_overlay(float width, float height)
 {
+    DiskDistances distances = calculate_disks_distance();
     g_msg_font.line_feed_mode(LF_X);
     g_msg_font.move_to(10.f, 0.f);
     g_msg_font.set_color(255, 255, 255, 255);
@@ -673,7 +819,9 @@ void draw_debug_overlay(float width, float height)
         g_FPS, g_frametime_begin, g_frametime);
     g_msg_font.draw_textf("delta time: %f", g_delta_time);
     g_msg_font.draw_textf("simulation time: %.2f s", g_simulation_time);
-    g_msg_font.draw_textf("deviation angle: %.2f deg", g_deviation_deg);
+    g_msg_font.draw_textf("deviation angle: %.2f deg", calculate_deviation_angle());
+    g_msg_font.draw_textf("disks center distance: %.2f units", distances.center_distance);
+    g_msg_font.draw_textf("disks end distance: %.2f units", distances.end_distance);
     g_msg_font.move_rel_to(0.f, 10.f);
 
     g_msg_font.draw_text("------ physics simulation ------");
@@ -696,6 +844,9 @@ void draw_pendulum()
     glDisableClientState(GL_NORMAL_ARRAY);
     glDisableClientState(GL_VERTEX_ARRAY);
     glDisable(GL_LIGHTING);
+
+    draw_deviation_angle();
+    draw_disks_distances();
 
     g_frametime = g_current_time - g_frametime_begin;
 }
@@ -734,9 +885,9 @@ constexpr float LOAD0_MAX_REL_Y = 0.0f;
 constexpr float LOAD1_MIN_REL_Y = -10.0f;
 constexpr float LOAD1_MAX_REL_Y = 0.f;
 constexpr float DRAG_SENSITIVITY = 0.5f;
-constexpr float PENDULUM_MIN_ANGLE = -90.0f; // Limit pendulum angle
+constexpr float PENDULUM_MIN_ANGLE = -90.0f;
 constexpr float PENDULUM_MAX_ANGLE = 90.0f;
-constexpr float ANGLE_SENSITIVITY = 0.1f; // Degrees per pixel of mouse movement
+constexpr float ANGLE_SENSITIVITY = 0.1f;
 
 void process_movable_nodes()
 {
@@ -768,7 +919,6 @@ void process_movable_nodes()
     }
     else if (!g_mouse_pressed && dragging) {
         if (dragging_id == g_pendulum_node_idx) {
-            // Update g_deviation_deg when releasing the pendulum
             g_deviation_deg = nodes_hierarchy[g_pendulum_node_idx].get_rotation().z;
             printf("Pendulum released, fixed deviation angle: %.2f deg\n", g_deviation_deg);
         }
@@ -812,7 +962,6 @@ void process_movable_nodes()
             pnode->set_position(newpos);
         }
         else if (dragging_id == g_pendulum_node_idx) {
-            // Calculate angle change based on horizontal mouse movement
             float deltaX = g_mouse.x - mouse_down.x;
             float new_angle = pendulum_down_angle - deltaX * ANGLE_SENSITIVITY;
             new_angle = glm::clamp(new_angle, PENDULUM_MIN_ANGLE, PENDULUM_MAX_ANGLE);
@@ -1061,7 +1210,6 @@ int main(int argc, char* argv[])
         process_movable_nodes();
         gl_font::begin_text(width, height);
         draw_debug_overlay(width, height);
-        //g_LCD.debug_draw(glm::vec2(0.f, 200.f));
         gl_font::end_text();
         SDL_GL_SwapWindow(g_pwindow);
     }
