@@ -582,12 +582,12 @@ void handle_keys(const SDL_Keysym& key)
         break;
 
     case SDLK_r:
-        if (!g_animator.isAnimating()) {
-            printf("Animation started\n");
-            g_bwas_animating = true;
-            g_animator.start();
-        }
-        break;
+      if (g_sim_state == SIM_STATE_IDLE && !g_animator.isAnimating()) {
+        printf("Animation started\n");
+        g_bwas_animating = true;
+        g_animator.start();
+      }
+      break;
 
     default:
         break;
