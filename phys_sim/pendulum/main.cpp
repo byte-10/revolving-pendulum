@@ -317,6 +317,10 @@ int            g_pendulum_node_idx;
 int            g_load0idx;
 int            g_load1idx;
 int            g_display_idx;
+int            g_button1_idx;
+int            g_button2_idx;
+int            g_button3_idx;
+SDL_Cursor*    g_ppointer_cursor = nullptr;
 SDL_Cursor*    g_parrow_cursor = nullptr;
 SDL_Cursor*    g_phand_cursor = nullptr;
 SDL_Cursor*    g_pcurr_cursor = nullptr;
@@ -569,21 +573,21 @@ void handle_keys(const SDL_Keysym& key)
         break;
 
     case SDLK_F1:
-      show_help();
-      break;
+        show_help();
+        break;
 
     case SDLK_F2:
-      g_debug_draw ^= DD_BOUNDS;
-      printf("Debug bounds %d\n", !!((g_debug_draw & DD_BOUNDS) == DD_BOUNDS));
-      break;
+        g_debug_draw ^= DD_BOUNDS;
+        printf("Debug bounds %d\n", !!((g_debug_draw & DD_BOUNDS) == DD_BOUNDS));
+        break;
 
     case SDLK_r:
-      if (!g_animator.isAnimating()) {
-        printf("Animation started\n");
-        g_bwas_animating = true;
-        g_animator.start();
-      }
-      break;
+        if (!g_animator.isAnimating()) {
+            printf("Animation started\n");
+            g_bwas_animating = true;
+            g_animator.start();
+        }
+        break;
 
     default:
         break;
@@ -1137,34 +1141,43 @@ void draw_pendulum()
 
 bool init_node_indices_and_cursors()
 {
-  printf("init_movable_nodes(): finding movable nodes...\n");
-  g_pendulum_node_idx = get_node_index("node3");
-  g_load0idx = get_node_index("node4");
-  g_load1idx = get_node_index("node5");
-  g_display_idx = get_node_index("node9_display");
-  g_node6_measure_idx = get_node_index("node6");
-  g_parrow_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
-  g_phand_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
-  g_animator.set_pendulum_node_id(g_pendulum_node_idx);
-  if (!(g_parrow_cursor && g_phand_cursor)) {
-    printf("init_movable_nodes(): cursors initializing failed!");
-    return false;
-  }
+    printf("init_movable_nodes(): finding movable nodes...\n");
+    g_pendulum_node_idx = get_node_index("node3");
+    g_load0idx = get_node_index("node4");
+    g_load1idx = get_node_index("node5");
+    g_display_idx = get_node_index("node9_display");
+    g_node6_measure_idx = get_node_index("node6");
+    g_button1_idx = get_node_index("button1");
+    g_button2_idx = get_node_index("button2");
+    g_button3_idx = get_node_index("button3");
 
-  return g_pendulum_node_idx != -1 &&
-    g_load0idx != -1 &&
-    g_display_idx != -1 &&
-    g_node6_measure_idx != -1 &&
-    g_load1idx != -1;
+    g_parrow_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+    g_phand_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+    g_ppointer_cursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND); // Указатель
+
+    g_animator.set_pendulum_node_id(g_pendulum_node_idx);
+
+    if (!(g_parrow_cursor && g_phand_cursor && g_ppointer_cursor)) {
+        printf("init_movable_nodes(): cursors initializing failed!");
+        return false;
+    }
+
+    return g_pendulum_node_idx != -1 &&
+        g_load0idx != -1 &&
+        g_display_idx != -1 &&
+        g_node6_measure_idx != -1 &&
+        g_load1idx != -1 &&
+        g_button1_idx != -1 &&
+        g_button2_idx != -1 &&
+        g_button3_idx != -1;
 }
 
 void set_cursor(SDL_Cursor* pcur)
 {
-  if (g_pcurr_cursor != pcur) {
-    g_pcurr_cursor = pcur;
-    SDL_SetCursor(g_pcurr_cursor);
-    SDL_SetCursor(nullptr);
-  }
+    if (g_pcurr_cursor != pcur) {
+        SDL_SetCursor(pcur);
+        g_pcurr_cursor = pcur;
+    }
 }
 
 constexpr float LOAD0_MIN_REL_Y = -10.0f;
@@ -1176,20 +1189,80 @@ constexpr float PENDULUM_MIN_ANGLE = -90.0f;
 constexpr float PENDULUM_MAX_ANGLE = 90.0f;
 constexpr float ANGLE_SENSITIVITY = 0.1f;
 
+void update_hover_cursor()
+{
+    if (g_sim_state == SIM_STATE_SUMULATING) {
+        set_cursor(g_parrow_cursor);
+        return;
+    }
+
+    glm::vec3 world_pos;
+    int id = get_id_from_coord(world_pos, g_viewport, g_mouse);
+
+    // Проверяем наведение на интерактивные элементы
+    if (id == g_pendulum_node_idx ||
+        id == g_load0idx ||
+        id == g_load1idx ||
+        id == g_button1_idx ||
+        id == g_button2_idx ||
+        id == g_button3_idx) {
+        set_cursor(g_ppointer_cursor);
+    }
+    else {
+        set_cursor(g_parrow_cursor);
+    }
+}
+
 void process_movable_nodes()
 {
-    static bool    dragging = false;
-    static int     dragging_id = -1;
+    static bool dragging = false;
+    static int dragging_id = -1;
     static glm::vec2 mouse_down;
     static glm::vec3 node_down_pos;
-    static float   pendulum_down_angle = 0.f;
+    static float pendulum_down_angle = 0.f;
 
-    if (g_sim_state == SIM_STATE_SUMULATING)
-        return;
+    // Обновляем курсор при наведении
+    if (!dragging) {
+        update_hover_cursor();
+    }
 
     if (g_mouse_pressed && !dragging) {
         glm::vec3 world_pos;
         int id = get_id_from_coord(world_pos, g_viewport, g_mouse);
+
+        // Обработка кликов по всей области кнопок
+        if (id == g_button1_idx) {
+            // Кнопка "Start" - работает при клике в любом месте текстуры
+            if (g_sim_state == SIM_STATE_IDLE) {
+                nodes_hierarchy[g_pendulum_node_idx].set_rotation({ 0.f, 0.f, g_deviation_deg });
+                printf("Start button pressed\n");
+                pendulum_phys_init_default(g_pendulum_phys, g_deviation_deg);
+                g_simulation_start_time = get_time();
+                g_simulation_time = 0.f;
+                g_sim_state = SIM_STATE_SUMULATING;
+            }
+            return;
+        }
+        else if (id == g_button2_idx) {
+            // Кнопка "Stop"
+            if (g_sim_state == SIM_STATE_SUMULATING) {
+                printf("Stop button pressed\n");
+                g_sim_state = SIM_STATE_STOPPED;
+            }
+            return;
+        }
+        else if (id == g_button3_idx) {
+            // Кнопка "Reset"
+            printf("Reset button pressed\n");
+            g_sim_state = SIM_STATE_IDLE;
+            g_deviation_deg = 0.f;
+            g_simulation_time = 0.f;
+            nodes_hierarchy[g_pendulum_node_idx].set_rotation({ 0.f, 0.f, g_deviation_deg });
+            pendulum_phys_init_default(g_pendulum_phys, g_deviation_deg);
+            return;
+        }
+
+        // Обработка перемещаемых элементов
         if (id == g_load0idx || id == g_load1idx || id == g_pendulum_node_idx) {
             dragging = true;
             dragging_id = id;
@@ -1202,19 +1275,16 @@ void process_movable_nodes()
             }
             set_cursor(g_phand_cursor);
         }
-        return;
     }
     else if (!g_mouse_pressed && dragging) {
         if (dragging_id == g_pendulum_node_idx) {
             g_deviation_deg = nodes_hierarchy[g_pendulum_node_idx].get_rotation().z;
-            printf("Pendulum released, fixed deviation angle: %.2f deg\n", g_deviation_deg);
         }
         dragging = false;
         dragging_id = -1;
-        set_cursor(g_parrow_cursor);
-        return;
     }
 
+    // Остальная логика перемещения узлов...
     if (dragging) {
         if (dragging_id == g_load0idx || dragging_id == g_load1idx) {
             model_node* pnode = &nodes_hierarchy[dragging_id];
@@ -1478,6 +1548,11 @@ int main(int argc, char* argv[])
         update_time();
         g_LCD.update(g_panel_font, g_msg_font, g_simulation_time);
 
+        // Вставляем обновление курсора здесь - ДО очистки экрана и рендеринга
+        if (!g_mouse_pressed) {
+            update_hover_cursor();
+        }
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         glLoadIdentity();
         glTranslatef(0.f, -15.f, -60.f);
@@ -1506,6 +1581,10 @@ int main(int argc, char* argv[])
 
     SDL_GL_DeleteContext(g_ctx);
     SDL_DestroyWindow(g_pwindow);
+    // В конце программы, перед SDL_Quit():
+    SDL_FreeCursor(g_parrow_cursor);
+    SDL_FreeCursor(g_phand_cursor);
+    SDL_FreeCursor(g_ppointer_cursor);
     SDL_Quit();
     return 0;
 }
