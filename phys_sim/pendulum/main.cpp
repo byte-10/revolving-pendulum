@@ -335,6 +335,11 @@ glm::vec3      g_pivot_offset;
 animator       g_animator;
 bool           g_bis_reversed = false;
 bool           g_bwas_animating = false;
+glm::vec2      g_top_constraint;
+glm::vec2      g_bottom_constraint;
+int            g_pendulum_idx = -1;
+int            g_binding_top_idx = -1;
+int            g_binding_bottom_idx = -1;
 
 template<int light_index>
 class gl_light
@@ -479,6 +484,46 @@ void change_coord_system(model_node* pnodes, int count, const obj_importer* pimp
     barycenter(newbb, pmesh->get_verts(), pmesh->get_num_verts());
     pnode->get_bbox() = newbb;
   }
+
+  g_binding_top_idx = get_node_index("node7");
+  g_binding_bottom_idx = get_node_index("node8");
+
+  // мировые bbox мамятика (после transform_verts пересчитанные!) 
+  const bbox_t& rodBB = pnodes[pi].get_bbox();
+
+  // bbox верхнего крепления (node7) в локальных coords маятника:
+  const bbox_t& bb7 = pnodes[g_binding_top_idx].get_bbox();
+  // bbox нижнего крепления (node8):
+  const bbox_t& bb8 = pnodes[g_binding_bottom_idx].get_bbox();
+
+  // Y-координаты в системе маятника:
+  float y_top_attach = bb7.vec_max.y;      // "минимум" для верхнего диска
+  float y_bottom_attach = bb8.vec_max.y;      // "минимум" для нижнего диска
+
+  // Y-граница конца стержня (например, rodBB.vec_max.y):
+  float y_rod_max = rodBB.vec_max.y;
+
+
+  //TODO: K.D. maybe this is not correct! CHANGE IT
+  // SEE BOTTOM CODE
+  g_top_constraint.x = y_top_attach;
+  g_top_constraint.y = y_rod_max-1.f;
+
+  float pivotY = g_pivot_offset.y;
+  float rodTopY = rodBB.vec_max.y;
+  float rodBotY = rodBB.vec_min.y;
+
+  //TODO: K.D. THIS IS WORK! ))))00000
+  glm::vec3 pendulum_bbox_size = rodBB.get_size();
+  const glm::vec3 pendulum_pos = nodes_hierarchy[pi].get_pos();
+  const glm::vec3 top_diskpos = nodes_hierarchy[g_load0idx].get_pos();
+  const glm::vec3 top_bindingpos = nodes_hierarchy[g_binding_top_idx].get_pos();
+  float yd_l0 = top_diskpos.y - pendulum_pos.y; //find Y delta between disk and pendulum barycenter
+  float yd_l0_min = (top_bindingpos.y - pendulum_pos.y) + bb7.get_size().y / 2.f; 
+  float yd_l0_max = yd_l0 + pendulum_bbox_size.y / 2.f; //correct delta by pendulum_bbox_size.y / 2.f
+
+  g_bottom_constraint.x = yd_l0_min;
+  g_bottom_constraint.y = yd_l0_max;
 }
 
 float get_time()
@@ -625,9 +670,9 @@ bool handle_events()
             g_mouse.y = event.motion.y;
             g_moused.x = event.motion.xrel;
             g_moused.y = event.motion.yrel;
-            printf("mouse(%d %d)  moused(%d %d)\n",
-                g_mouse.x, g_mouse.y,
-                g_moused.x, g_moused.y);
+            //printf("mouse(%d %d)  moused(%d %d)\n",
+            //    g_mouse.x, g_mouse.y,
+            //    g_moused.x, g_moused.y);
             break;
 
         case SDL_MOUSEBUTTONDOWN:
@@ -1086,12 +1131,12 @@ void draw_disks_distances()
     glEnd();
 
     // Draw end distance text
-    glm::vec3 mid_end = (load0_end + load1_end) * 0.5f;
-    gl_font::begin_text(g_viewport.z, g_viewport.w);
-    g_msg_font.set_color(255, 255, 255, 255);
-    g_msg_font.move_to(mid_end.x * 10.0f + g_viewport.z * 0.5f, -mid_end.y * 10.0f + g_viewport.w * 0.5f);
-    g_msg_font.draw_textf("%.2f units", distances.end_distance);
-    gl_font::end_text();
+    //glm::vec3 mid_end = (load0_end + load1_end) * 0.5f;
+    //gl_font::begin_text(g_viewport.z, g_viewport.w);
+    //g_msg_font.set_color(255, 255, 255, 255);
+    //g_msg_font.move_to(mid_end.x * 10.0f + g_viewport.z * 0.5f, -mid_end.y * 10.0f + g_viewport.w * 0.5f);
+    //g_msg_font.draw_textf("%.2f units", distances.end_distance);
+    //gl_font::end_text();
 
     if (lighting_enabled)
         glEnable(GL_LIGHTING);
@@ -1207,8 +1252,8 @@ void update_hover_cursor()
         id == g_button_start_idx ||
         id == g_button_stop_idx ||
         id == g_button_reset_idx) {
-      printf("g_button_start_idx=%d  g_button_stop_idx=%d  g_button_reset_idx=%d  id=%d\n",
-        g_button_start_idx, g_button_stop_idx, g_button_reset_idx, id);
+      //printf("g_button_start_idx=%d  g_button_stop_idx=%d  g_button_reset_idx=%d  id=%d\n",
+      //  g_button_start_idx, g_button_stop_idx, g_button_reset_idx, id);
         set_cursor(g_ppointer_cursor);
     }
     else {
@@ -1297,12 +1342,16 @@ void process_movable_nodes()
             glm::vec3 parentPos(0.0f);
             float rangeMin, rangeMax;
             if (dragging_id == g_load0idx) {
-                rangeMin = LOAD0_MIN_REL_Y;
-                rangeMax = LOAD0_MAX_REL_Y;
+              //rangeMin = LOAD0_MIN_REL_Y;
+              //rangeMax = LOAD0_MAX_REL_Y;
+              rangeMin = g_top_constraint.x;
+              rangeMax = g_top_constraint.y;
             }
             else if (dragging_id == g_load1idx) {
-                rangeMin = LOAD1_MIN_REL_Y;
-                rangeMax = LOAD1_MAX_REL_Y;
+              //rangeMin = LOAD1_MIN_REL_Y;
+              //rangeMax = LOAD1_MAX_REL_Y;
+              rangeMin = g_bottom_constraint.x;
+              rangeMax = g_bottom_constraint.y;
             }
             else {
                 return;
@@ -1314,8 +1363,10 @@ void process_movable_nodes()
             }
 
             float screenH = static_cast<float>(g_viewport.w);
-            float normDelta = (mouse_down.y - g_mouse.y) / screenH;
-            float relY = initialRel + normDelta * (rangeMax - rangeMin);
+            float mousedy = (g_bis_reversed) ? g_mouse.y - mouse_down.y : mouse_down.y - g_mouse.y;
+            //float normDelta = (mouse_down.y - g_mouse.y) / screenH;
+            float normDelta = mousedy / screenH;
+            float relY = initialRel + normDelta * 8.f;
             relY = glm::clamp(relY, rangeMin, rangeMax);
 
             newpos.y = parentPos.y + relY;
@@ -1432,30 +1483,34 @@ void sort_meshes()
 
 void init_textures()
 {
-    GLuint       texid;
-    text_texture text_tex;
-    text_tex.size = { 100, 50 };
-    text_tex.background_color = glm::vec3(1.f, 0.1f, 0.1f);
-    text_tex.foreground_color = glm::vec3(1.f, 1.f, 1.f);
-
     model_node* pLCD = find_node("node9_display");
     assert(g_LCD.get_texid() && "g_LCD texture not initialized!");
     pLCD->set_texid(g_LCD.get_texid());
 
-    model_node* pbtn1 = find_node("node10_button1");
-    texid = create_text_texture(text_tex, g_msg_font, "Start");
-    assert(texid != 0 && "failed to create texture");
-    pbtn1->set_texid(texid);
+    //TODO: K.D. @nobidin   create_text_texture NOT WORK OR TEXCOORDS NOT EXISTS. ZZzzzzzzz
+    GLuint texid;
+    text_texture text_tex;
+    text_tex.size = { 500, 500 };
+    text_tex.background_color = glm::vec3(1.f, 0.1f, 0.1f);
+    text_tex.foreground_color = glm::vec3(1.f, 1.f, 1.f);
+    model_node* pbuttontext = find_node("node13_text");
+    texid = create_text_texture(text_tex, g_msg_font, "Start\nStop\nReset");
+    pbuttontext->set_texid(texid);
 
-    model_node* pbtn2 = find_node("node11_button2");
-    texid = create_text_texture(text_tex, g_msg_font, "Stop");
-    assert(texid != 0 && "failed to create texture");
-    pbtn2->set_texid(texid);
+    //model_node* pbtn1 = find_node("node10_button1");
+    //texid = create_text_texture(text_tex, g_msg_font, "Start");
+    //assert(texid != 0 && "failed to create texture");
+    //pbtn1->set_texid(texid);
 
-    model_node* pbtn3 = find_node("node12_button3");
-    texid = create_text_texture(text_tex, g_msg_font, "Reset");
-    assert(texid != 0 && "failed to create texture");
-    pbtn3->set_texid(texid);
+    //model_node* pbtn2 = find_node("node11_button2");
+    //texid = create_text_texture(text_tex, g_msg_font, "Stop");
+    //assert(texid != 0 && "failed to create texture");
+    //pbtn2->set_texid(texid);
+
+    //model_node* pbtn3 = find_node("node12_button3");
+    //texid = create_text_texture(text_tex, g_msg_font, "Reset");
+    //assert(texid != 0 && "failed to create texture");
+    //pbtn3->set_texid(texid);
 }
 
 void print_meshes()
